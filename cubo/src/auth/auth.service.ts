@@ -24,7 +24,7 @@ export class AuthService {
     }
 
     // Verificar si el email ya existe
-    const existingEmail = await this.prisma.user.findFirst({
+    const existingEmail = await this.prisma.user.findUnique({
       where: { email: payload.email },
     });
 
