@@ -19,15 +19,15 @@ erDiagram
         string room_id FK, PK
         string user_id FK, PK
 		int turn_order
-		string cards "Codificadas por csv o similar"
+		int[] cards
 		int[5] habilidades
     } 
 
     GAME_STATE {
         string name PK
         string creator_id FK, PK 
-        string habilidades_activadas "Codificadas por csv o similar"
-		string discarded_cards "Codificadas por csv o similar"
+		int[] habilidades_activadas 
+		int[] discarded_cards
 		int turn
         timestamp updated_at
     } "TODO: vista de partidas pausadas en las que eres creador"
