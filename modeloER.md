@@ -2,53 +2,51 @@
 erDiagram
 
     USERS {
-        uuid id PK
-        string username
+        string username PK
         string email
         string password_hash
         int cubitos
         int elo_rating
-		int rank_placement
+		int rank_placement "Actualizado periodicamente"
         int games_played
         int games_won
-		int players_played
+		int num_players_played
+        int num_players_won
 		jsonb settings "TODO"
-        timestamp created_at
-        timestamp updated_at
     }
 
     PAUSED_GAME_PLAYERS {
-        uuid id PK
-        uuid room_id FK
-        uuid user_id FK
+        string room_id FK, PK
+        string user_id FK, PK
 		int turn_order
-		jsonb cards
+		string cards "Codificadas por csv o similar"
 		int[5] habilidades
-        boolean is_creator
-    } "TODO: vista de partidas pausadas en las que eres creador"
+    } 
 
     GAME_STATE {
-        uuid id PK
-        uuid name
-        string habilidades_activadas
-		jsonb discarded_cards
+        string name PK
+        string creator_id FK, PK 
+        string habilidades_activadas "Codificadas por csv o similar"
+		string discarded_cards "Codificadas por csv o similar"
 		int turn
         timestamp updated_at
-    }
+    } "TODO: vista de partidas pausadas en las que eres creador"
 
     SKINS {
-        uuid id PK
-        string name
-        string type  "card | mat | avatar"
+        string name PK
+        string type "card | mat | avatar"
         int price
 		string url "buckets"
     }
 
     USER_SKINS {
-        uuid user_id FK,PK
-        uuid skin_id FK,PK
+        string user_id FK,PK
+        string skin_id FK,PK
     }
 
     USERS ||--o{ USER_SKINS : owns
     SKINS ||--o{ USER_SKINS : purchased
+    USERS ||--o{ GAME_STATE : creates
+    GAME_STATE ||--o{ PAUSED_GAME_PLAYERS : includes
+    USERS ||--o{ PAUSED_GAME_PLAYERS : participates
 ```
