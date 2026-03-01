@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import * as bcrypt from 'bcrypt';
 
 //Toda la logica
@@ -94,4 +95,32 @@ export class AuthService {
     // accessToken: ...
     // refreshToken: ...
   }
+
+  async changePassword(username: string, payload: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({
+      where: { username },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    // Verificar contraseña actual
+    const passwordMatch = await bcrypt.compare(payload.currentPassword, user.passwordHash);
+    if (!passwordMatch) {
+      throw new UnauthorizedException('Contraseña actual incorrecta');
+    }
+
+    // Hash de la nueva contraseña
+    const newPasswordHash = await bcrypt.hash(payload.newPassword, 10);
+
+    // Actualizar en BD
+    await this.prisma.user.update({
+      where: { username },
+      data: { passwordHash: newPasswordHash },
+    });
+
+    return { message: 'Contraseña actualizada correctamente' };
+  }
+
 }

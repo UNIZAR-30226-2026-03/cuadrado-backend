@@ -2,6 +2,7 @@ import { Body, Controller, Post, UseGuards, Get, Request } from '@nestjs/common'
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtGuard } from './guards/jwt.guard';
 
 //Recibe hhtp, valida los datos con DTO, llama al service y devuelve la respuesta
@@ -17,6 +18,12 @@ export class AuthController {
   @Post('login')
   async login(@Body() body: LoginDto) {
     return this.authService.login(body);
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtGuard)
+  async changePassword( @Request() req: any, @Body() body: ChangePasswordDto) {
+    return this.authService.changePassword(req.user.username, body);
   }
 
   @Get('me')
