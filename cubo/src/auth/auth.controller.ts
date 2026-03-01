@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { RefreshDto } from './dto/refresh.dto';
 import { JwtGuard } from './guards/jwt.guard';
 
 //Recibe hhtp, valida los datos con DTO, llama al service y devuelve la respuesta
@@ -24,6 +25,18 @@ export class AuthController {
   @UseGuards(JwtGuard)
   async changePassword( @Request() req: any, @Body() body: ChangePasswordDto) {
     return this.authService.changePassword(req.user.username, body);
+  }
+
+  @Post('refresh')
+  async refresh(@Body() body: RefreshDto) {
+    return this.authService.refreshAccessToken(body.refreshToken);
+  }
+
+  @Post('logout')
+  @UseGuards(JwtGuard)
+  async logout(@Request() req: any) {
+    // El cliente envía el refresh token
+    return this.authService.logout(req.body.refreshToken);
   }
 
   @Get('me')
