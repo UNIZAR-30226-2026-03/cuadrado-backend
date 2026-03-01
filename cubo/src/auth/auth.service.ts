@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { RefreshDto } from './dto/refresh.dto';
 import * as bcrypt from 'bcrypt';
 
 //Toda la logica
@@ -82,6 +83,21 @@ export class AuthService {
       email: user.email,
     });
 
+     // Generar refresh token
+    const refreshToken = this.jwtService.sign(
+      { sub: user.username },
+      { expiresIn: '30d' }
+    );
+
+    // Guardar refresh token en BD
+    await this.prisma.refreshToken.create({
+      data: {
+        userId: user.username,
+        token: refreshToken,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 días
+      },
+    });
+
     return {
       accessToken,
       user: {
@@ -91,9 +107,6 @@ export class AuthService {
       },
     };
     
-    // TODO: Implementar refresh token cuando sea necesario
-    // accessToken: ...
-    // refreshToken: ...
   }
 
   async changePassword(username: string, payload: ChangePasswordDto) {
@@ -121,6 +134,61 @@ export class AuthService {
     });
 
     return { message: 'Contraseña actualizada correctamente' };
+  }
+
+  async refreshAccessToken(refreshToken: string) {
+    // Validar que el refresh token exista en BD y no esté expirado
+    const storedToken = await this.prisma.refreshToken.findUnique({
+      where: { token: refreshToken },
+      include: { user: true },
+    });
+
+    if (!storedToken || storedToken.expiresAt < new Date()) {
+      throw new UnauthorizedException('Refresh token inválido o expirado');
+    }
+
+    // Verificar firma del JWT
+    try {
+      this.jwtService.verify(refreshToken);
+    } catch {
+      throw new UnauthorizedException('Refresh token inválido');
+    }
+
+    const user = storedToken.user;
+
+    // Generar nuevo access token
+    const newAccessToken = this.jwtService.sign({
+      sub: user.username,
+      email: user.email,
+    });
+
+    // Opcionalmente: generar nuevo refresh token
+    const newRefreshToken = this.jwtService.sign(
+      { sub: user.username },
+      { expiresIn: '30d' }
+    );
+
+    // Guardar el nuevo refresh token
+    await this.prisma.refreshToken.create({
+      data: {
+        userId: user.username,
+        token: newRefreshToken,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    return {
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    };
+  }
+
+  async logout(refreshToken: string) {
+    await this.prisma.refreshToken.delete({
+      where: { token: refreshToken },
+    });
+
+    return { message: 'Sesión cerrada' };
   }
 
 }
