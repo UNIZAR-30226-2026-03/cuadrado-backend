@@ -47,16 +47,17 @@ export class fg_passwdService {
         //redirigir a ventana de introducción de código de verificación
         }
 
-        async response(playload: codeAuthDto){
-            const correctCode = await this.prisma.user.findUnique({
-                    where: {code: playload.authCode, email: playload.email }});
-            if(!correctCode){
-                throw new UnauthorizedException
+    async response(playload: codeAuthDto){
+
+        const user = await this.prisma.user.findFirst({
+                where: {email: playload.email}});
+
+        if(!user || user.auth_code != playload.authCode){
+            throw new UnauthorizedException
                             ("El código de verificación es incorrecto");
-            } else {
-                //reidirigir a la ventana de cambio de contraseña
-            }
-            
-        }
+        } else {
+            //reidirigir a la ventana de cambio de contraseña
+        }    
+    }
 }
 

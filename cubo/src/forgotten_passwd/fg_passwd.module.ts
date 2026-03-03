@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MailerModule } from '@nestjs-modules/mailer';
 import { ConfigService } from '@nestjs/config';
 import { fg_passwdService } from './fg_passwd.service'
+import { FgPasswdController } from './fg_passwd.controllers';
 
 @Module({
     imports: [
@@ -30,5 +31,6 @@ import { fg_passwdService } from './fg_passwd.service'
     ],
     providers: [fg_passwdService],
     exports: [fg_passwdService],
+    controllers: [FgPasswdController],
     })
     export class FgPasswdModule {}

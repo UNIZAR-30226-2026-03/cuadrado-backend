@@ -24,6 +24,7 @@ model User {
   numPlayersPlayed Int    @map("num_players_played")
   numPlayersWon    Int    @map("num_players_won")
   settings         Json?  @map("settings")
+  auth_code        String @map("auth_code")
 
   gameStates         GameState[]        @relation("UserGameStates") //Partidas de las que es creador
   pausedGamePlayers  PausedGamePlayer[]  //Partidas pausadas en las que participa (incluidas )
