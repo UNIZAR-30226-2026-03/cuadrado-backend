@@ -24,7 +24,14 @@ model User {
   numPlayersPlayed Int    @map("num_players_played")
   numPlayersWon    Int    @map("num_players_won")
   settings         Json?  @map("settings")
-  auth_code        String @map("auth_code")
+  
+  //Campos para el código temporal de recuperación de contraseña
+  auth_code        String? @map("auth_code")
+  creationTime     DateTime? @map("creation_time")
+  expirationTime   DateTime? @map("expiration_time")
+
+  // Índice para que la eliminación sea rápida
+  @@index([expirationTime])
 
   gameStates         GameState[]        @relation("UserGameStates") //Partidas de las que es creador
   pausedGamePlayers  PausedGamePlayer[]  //Partidas pausadas en las que participa (incluidas )

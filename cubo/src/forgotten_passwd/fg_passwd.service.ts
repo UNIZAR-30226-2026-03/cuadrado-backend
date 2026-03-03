@@ -31,12 +31,17 @@ export class fg_passwdService {
         if(existingUser){
             let authCode: string = fg_passwdService.codeGen(9)
             //mandarle un mail con el código de validación del usuario
-            
+            //crear el tiempo de creación y expiración del token.
+            //TTL del token de 10 mins
+            const fechaInicio = new Date();
+            const fechaFin = new Date(fechaInicio.getTime()+ 10*60000);
+
             //HAY QUE AÑADIR EL CÓDIGO DE RECUPERACIÓN EN LA TABLA USUARIO
-            // await this.prisma.user.update({
-            //     where:{username: existingUser.username},
-            //     data: {code: authCode},
-            // });
+            await this.prisma.user.update({
+                 where:{username: existingUser.username},
+                 data: {auth_code: authCode, creation_time: fechaInicio,
+                        expiration_time: fechaFin},
+             });
             
             await this.mailer.sendMail({
                         to: playload.email, 
