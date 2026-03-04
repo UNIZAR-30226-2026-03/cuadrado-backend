@@ -84,7 +84,7 @@ model PausedGamePlayer {
 
 model Skin {
   name  String @id
-  type  String
+  type  String  // "Carta", "Avatar" o "Tapete"
   price Int
   url   String
 
