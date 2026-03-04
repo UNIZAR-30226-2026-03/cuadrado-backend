@@ -39,8 +39,8 @@ export class fg_passwdService {
             //HAY QUE AÑADIR EL CÓDIGO DE RECUPERACIÓN EN LA TABLA USUARIO
             await this.prisma.user.update({
                  where:{username: existingUser.username},
-                 data: {auth_code: authCode, creation_time: fechaInicio,
-                        expiration_time: fechaFin},
+                 data: {auth_code: authCode, creationTime: fechaInicio,
+                        expirationTime: fechaFin},
              });
             
             await this.mailer.sendMail({
@@ -48,8 +48,12 @@ export class fg_passwdService {
                         subject: "Codigo Verificacion",
                         text: authCode
                         })
+            return true;
+
+            } else {
+                throw new UnauthorizedException("El mail no está registrado");
             }
-        //redirigir a ventana de introducción de código de verificación
+        
         }
 
     async response(playload: codeAuthDto){
@@ -61,7 +65,7 @@ export class fg_passwdService {
             throw new UnauthorizedException
                             ("El código de verificación es incorrecto");
         } else {
-            //reidirigir a la ventana de cambio de contraseña
+            return true;
         }    
     }
 }
