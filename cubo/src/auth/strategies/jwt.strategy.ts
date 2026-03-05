@@ -14,6 +14,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   //extrae datos del token y los devuelve
+  //Podria tambien ir a la bd y devolver el usuario entero, por ahora lo dejo asi
   async validate(payload: any) {
     return { username: payload.sub, email: payload.email };
   }
