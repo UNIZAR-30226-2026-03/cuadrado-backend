@@ -4,8 +4,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  console.log("ANTES de NestFactory.create: SMTP_PORT =", process.env.POSTGRES_USER);
   const app = await NestFactory.create(AppModule);
-
   // Prefijo global para todas las rutas
   app.setGlobalPrefix('api');
 
