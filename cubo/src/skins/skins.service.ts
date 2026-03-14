@@ -32,7 +32,7 @@ export class SkinsService {
     async buySkin(username: string, skinId: string) {
         // a) Verificar que la skin existe
         const skin = await this.prisma.skin.findUnique({
-            where: { id: skinId },
+            where: { name: skinId },
         });
 
         if (!skin) {
@@ -109,7 +109,7 @@ export class SkinsService {
         // b) Actualizar el usuario
         await this.prisma.user.update({
             where: { username },
-            data: { equippedSkinId: skinId },
+            data: { equippedSkinID: skinId },
         });
 
         return { message: 'Skin equipada con éxito' };
@@ -119,7 +119,7 @@ export class SkinsService {
     async unequipSkin(username: string) {
         await this.prisma.user.update({
             where: { username },
-            data: { equippedSkinId: null },
+            data: { equippedSkinID: null },
         });
 
         return { message: 'Skin desequipada con éxito' };
