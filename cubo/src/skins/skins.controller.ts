@@ -35,8 +35,15 @@ export class SkinsController {
 
     // 5. Desequipar skin actual
     @UseGuards(JwtGuard)
-    @Patch('unequip')
-    async unequipSkin(@Request() req: any) {
-        return this.skinsService.unequipSkin(req.user.username);
+    @Patch('unequip/:type')
+    async unequipSkin(@Param('type') type: string, @Request() req: any) {
+        return this.skinsService.unequipSkin(req.user.username, type);
+    }
+
+    // 6. Obtener skins equipadas
+    @UseGuards(JwtGuard)
+    @Get('equipped')
+    async getEquippedSkins(@Request() req: any) {
+        return this.skinsService.getEquippedSkins(req.user.username);
     }
 }

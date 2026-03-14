@@ -36,7 +36,9 @@ model User {
   gameStates         GameState[]        @relation("UserGameStates") //Partidas de las que es creador
   pausedGamePlayers  PausedGamePlayer[]  //Partidas pausadas en las que participa (incluidas )
   userSkins          UserSkin[]
-  equippedSkinID     String?            @map("equipped_skin_id")
+  equippedAvatarId String? @map("equipped_avatar_id")  // null = skin por defecto
+  equippedCardId   String? @map("equipped_card_id")    // null = skin por defecto
+  equippedTapeteId String? @map("equipped_tapete_id")  // null = skin por defecto
 
   refreshTokens    RefreshToken[]
 
