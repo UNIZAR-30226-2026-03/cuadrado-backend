@@ -1,6 +1,14 @@
 import { Player } from './player.interface';
 import { RulesConfig } from './rules-config.interface';
 
+export interface PublicRoomSummary {
+  name: string;
+  code: string;
+  playersCount: number;
+  rules: RulesConfig;
+  createdAt: Date;
+}
+
 export interface Room {
   name: string;
   code: string;

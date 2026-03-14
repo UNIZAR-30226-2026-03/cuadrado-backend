@@ -1,5 +1,9 @@
 import { Player } from './interfaces/player.interface';
-import { Room, RoomState } from './interfaces/room.interface';
+import {
+  PublicRoomSummary,
+  Room,
+  RoomState,
+} from './interfaces/room.interface';
 import { RulesConfig } from './interfaces/rules-config.interface';
 
 const RECONNECT_TIMEOUT_MS = 25000;
@@ -238,6 +242,18 @@ export class RoomManager {
     }
 
     return this.rooms.get(roomCode) || null;
+  }
+
+  getPublicRooms(): PublicRoomSummary[] {
+    return Array.from(this.rooms.values())
+      .filter((room) => !room.rules.isPrivate && !room.started)
+      .map((room) => ({
+        name: room.name,
+        code: room.code,
+        playersCount: room.players.size,
+        rules: room.rules,
+        createdAt: room.createdAt,
+      }));
   }
 
   private getRoomByCode(roomCode: string): Room | null {

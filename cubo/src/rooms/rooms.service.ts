@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { RoomState } from './interfaces/room.interface';
+import { PublicRoomSummary, RoomState } from './interfaces/room.interface';
 import { CreateRoomInput, RoomManager } from './room.manager';
 
 @Injectable()
@@ -40,5 +40,9 @@ export class RoomsService {
 
   getRoomByUserId(userId: string) {
     return this.roomManager.getRoomByUserId(userId);
+  }
+
+  getPublicRooms(): PublicRoomSummary[] {
+    return this.roomManager.getPublicRooms();
   }
 }

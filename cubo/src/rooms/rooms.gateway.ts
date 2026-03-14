@@ -159,6 +159,18 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('rooms:list-public')
+  listPublicRooms(@ConnectedSocket() client: Socket) {
+    try {
+      return {
+        success: true,
+        rooms: this.roomsService.getPublicRooms(),
+      };
+    } catch (error) {
+      throw new WsException(this.getErrorMessage(error));
+    }
+  }
+
   @SubscribeMessage('rooms:leave')
   leaveRoom(@ConnectedSocket() client: Socket) {
     try {
