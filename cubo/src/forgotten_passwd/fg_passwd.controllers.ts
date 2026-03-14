@@ -4,7 +4,7 @@ import { fg_passwdService } from './fg_passwd.service';
 import { forgotten_passwdDto } from './dto/fg_passwd.dto';
 import { codeAuthDto } from './dto/codeAuth.dto';
 
-@Controller('forgotten-passwd')
+@Controller('forgotten_passwd')
 export class FgPasswdController {
   constructor(private readonly fgPasswdService: fg_passwdService) {}
 
