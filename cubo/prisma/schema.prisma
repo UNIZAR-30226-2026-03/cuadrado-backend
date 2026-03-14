@@ -1,0 +1,106 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  username         String @id
+  email            String @unique
+  passwordHash     String @map("password_hash")
+  cubitos          Int
+  eloRating        Int    @map("elo_rating")
+  rankPlacement    Int    @map("rank_placement")
+  gamesPlayed      Int    @map("games_played")
+  gamesWon         Int    @map("games_won")
+  numPlayersPlayed Int    @map("num_players_played")
+  numPlayersWon    Int    @map("num_players_won")
+  settings         Json?  @map("settings")
+  
+  //Campos para el código temporal de recuperación de contraseña
+  auth_code        String? @map("auth_code")
+  creationTime     DateTime? @map("creation_time")
+  expirationTime   DateTime? @map("expiration_time")
+
+  // Índice para que la eliminación sea rápida
+  @@index([expirationTime])
+
+  gameStates         GameState[]        @relation("UserGameStates") //Partidas de las que es creador
+  pausedGamePlayers  PausedGamePlayer[]  //Partidas pausadas en las que participa (incluidas )
+  userSkins          UserSkin[]
+  equippedSkinID     String?            @map("equipped_skin_id")
+
+  refreshTokens    RefreshToken[]
+
+  @@map("USERS")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user      User      @relation(fields: [userId], references: [username], onDelete: Cascade)
+
+  @@map("REFRESH_TOKENS")
+}
+
+model GameState {
+  name                 String @id
+  creatorId            String @map("creator_id")
+  habilidadesActivadas Int[]  @map("habilidades_activadas")
+  discardedCards       Int[] @map("discarded_cards")
+  turn                 Int
+  updatedAt            DateTime @map("updated_at")
+
+  creator             User               @relation("UserGameStates", fields: [creatorId], references: [username])
+  pausedGamePlayers   PausedGamePlayer[]
+
+  @@map("GAME_STATE")
+}
+
+model PausedGamePlayer {
+  roomId    String @map("room_id")
+  userId    String @map("user_id")
+  turnOrder Int    @map("turn_order")
+  cards     Int[]
+  habilidades Int[]
+
+  gameState GameState @relation(fields: [roomId], references: [name])
+  user      User      @relation(fields: [userId], references: [username])
+
+  @@id([roomId, userId])
+  @@map("PAUSED_GAME_PLAYERS")
+}
+
+model Skin {
+  name  String @id
+  type  String  // "Carta", "Avatar" o "Tapete"
+  price Int
+  url   String
+
+  userSkins UserSkin[]
+
+  @@map("SKINS")
+}
+
+model UserSkin {
+  userId String @map("user_id")
+  skinId String @map("skin_id")
+
+  user User @relation(fields: [userId], references: [username])
+  skin Skin @relation(fields: [skinId], references: [name])
+
+  @@id([userId, skinId])
+  @@map("USER_SKINS")
+}
