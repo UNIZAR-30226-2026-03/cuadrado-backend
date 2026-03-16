@@ -11,6 +11,8 @@ import { FgPasswdController } from './fg_passwd.controllers';
             useFactory: (ConfigService: ConfigService) => {
                 const port = Number(ConfigService.getOrThrow<string>
                     ('SMTP_PORT'));
+                const smtpUser = ConfigService.getOrThrow<string>('SMTP_USER');
+                const smtpFrom = ConfigService.get<string>('SMTP_FROM') || smtpUser;
                     
                 return{
                 transport: {
@@ -18,12 +20,12 @@ import { FgPasswdController } from './fg_passwd.controllers';
                     port,
                     secure: port === 465,
                     auth: {
-                        user: ConfigService.getOrThrow<string>('SMTP_USER'),
+                        user: smtpUser,
                         pass: ConfigService.getOrThrow<string>('SMTP_PASS'),
                     },
                 },
                 defaults: {
-                    from: ConfigService.getOrThrow<string>('SMTP_FROM'),
+                    from: smtpFrom,
                 },
             };
         },
