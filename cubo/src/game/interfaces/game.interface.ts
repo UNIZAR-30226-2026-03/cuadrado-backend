@@ -1,4 +1,5 @@
 import {Room} from '../../rooms/interfaces/room.interface'
+import {Card} from './card.interface'
 
 export interface Game {
     gameId : string;
@@ -10,15 +11,16 @@ export interface Game {
 
 export interface GameState {
     turn : number;
-    cartasVigentes : number[];
-    cartasDescartadas : number[];
-    habilidades_activadas : number[];
+    cartasVigentes : Card[];
+    cartasDescartadas : Card[];
+    habilidadesActivadas : number[];
     jugadores : PlayerState[];
 }
 
 export interface PlayerState {
-    userId : number;
-    cartas_mano : number[];
-    habilidades_activadas : number[];
+    userId : string;
+    cartasMano : Card[];
+    habilidadesActivadas : number[];
+    cartaPendiente?: Card;
 }
 
