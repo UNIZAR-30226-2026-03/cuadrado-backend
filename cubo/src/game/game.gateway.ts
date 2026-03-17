@@ -8,6 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
+import { Game } from './interfaces/game.interface';
 
 interface robarCartaPayload {
   gameId: string;
@@ -30,6 +31,14 @@ export class GameGateway {
 
   constructor(private readonly gameService: GameService) {}
 
+  private notificarTodos(partida : Game){
+    this.server.to(partida.roomId).emit('actualizacion:partida',{
+      partidaId : partida.gameId,
+      estadoGlobal: partida.estadoGlobal,
+    });
+  }
+
+  
   @SubscribeMessage('game:robar-carta')
   robarCarta(
     @ConnectedSocket() client: Socket,
@@ -39,6 +48,7 @@ export class GameGateway {
       const partida = this.gameService.getGameById(payload.gameId);
       this.gameService.robarCarta(partida);
 
+      this.notificarTodos(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
         gameId : payload.gameId,
         cartaPendiente:
@@ -59,6 +69,7 @@ export class GameGateway {
     try{
       const partida = this.gameService.getGameById(payload.gameId);
       this.gameService.descartarPendiente(partida);
+      this.notificarTodos(partida);
       this.server.to(client.id).emit('game:accion-aceptada', {
         gameId : payload.gameId,
       });
@@ -75,6 +86,7 @@ export class GameGateway {
     try{
       const partida = this.gameService.getGameById(payload.gameId);
       this.gameService.cartaPorPendiente(partida,payload.numCarta);
+      this.notificarTodos(partida);
       this.server.to(client.id).emit('game:accion-aceptada', {
         gameId : payload.gameId,
       });

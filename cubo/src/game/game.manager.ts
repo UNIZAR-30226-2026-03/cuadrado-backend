@@ -144,7 +144,7 @@ private static mezclarArray<T>(array: T[]): T[] {
     }
 
     //un jugador roba una carta y se actualiza el estado de la partida
-    robarCarta(partida : Game){
+    robarCarta(partida : Game) {
         const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
         if(!cartaRobada){
             throw new Error("No quedan cartas para robar")
