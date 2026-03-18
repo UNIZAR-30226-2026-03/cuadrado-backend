@@ -10,6 +10,7 @@ import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { Room } from 'src/rooms/interfaces/room.interface';
 
 interface robarCartaPayload {
   gameId: string;
@@ -22,7 +23,17 @@ interface cartaPorPendientePayload{
   idEnPartida: number,
 }
 
+interface iniciarPartidaPayload {
+  sala : Room;
+}
 
+interface intercambiarCartaPayload{
+  gameId : string,
+  remitenteId: number,
+  numCartaRemitente: number,
+  destinatarioId: number,
+  numCartaDestinatario: number,
+}
 
 @WebSocketGateway({
   cors: {
@@ -56,7 +67,39 @@ export class GameGateway {
       carta: carta,
     });
   }
-  
+
+  private notificarTodosComienzoPartida(partida: Game){
+    this.server.to(partida.roomId).emit('descartar-pendiente',{
+      partidaId : partida.gameId,
+    });
+  }
+
+  private notificarTodosCambioCartas(partida: Game, idRemitente: number,
+    idDestinatario: number
+  ){
+     this.server.to(partida.roomId).emit('intercambio-cartas',{
+      partidaId : partida.gameId,
+      remitente: idRemitente,
+      destinatario: idDestinatario,
+    });
+  }
+  @SubscribeMessage('iniciar-partida')
+  iniciarPartida(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: iniciarPartidaPayload,
+  ){
+      if(payload.sala.started == false){
+        const partida = this.gameService.inicioPartida(payload.sala);
+        this.notificarTodosComienzoPartida(partida);
+        return{
+          success: true
+        }
+      }else{
+        throw new Error('La partida ya ha sido empezada');
+      }
+  }
+
+
   @SubscribeMessage('game:robar-carta')
   robarCarta(
     @ConnectedSocket() client: Socket,
@@ -121,7 +164,19 @@ export class GameGateway {
       throw new WsException("Error inesperado");
     }
   }
+  
+  @SubscribeMessage('intercambiar-carta')
+  intercambiarCarta(
+    @MessageBody() payload: intercambiarCartaPayload,
+  ){
+    const partida = this.gameService.getGameById(payload.gameId);
+    this.gameService.intercambiarCarta(partida, payload.remitenteId,
+      payload.destinatarioId, payload.numCartaRemitente, 
+      payload.numCartaDestinatario);
+    this.notificarTodosCambioCartas(partida,payload.remitenteId, 
+      payload.destinatarioId);
 
+  }
 ////////////////////////////////////////////////////////////////////////////////
 //                              HABILIDADES DE CARTAS                         //
 ////////////////////////////////////////////////////////////////////////////////

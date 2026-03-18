@@ -26,9 +26,15 @@ export class GameService {
   }
   cartaPorPendiente(partida: Game, numCarta: number, idEnPartida: number){
     return this.gameManager.descartarCartaPorPendiente(
-      partida, 
-      numCarta,
-      idEnPartida,
+      partida, numCarta, idEnPartida,
     );
+  }
+
+  intercambiarCarta(partida: Game, remitenteId:number, destinatarioId:number,
+    numCartaRemitente: number, numCartaDestinatario: number){
+      return this.gameManager.intercambiarCarta(
+        partida, remitenteId, destinatarioId, numCartaRemitente,
+        numCartaDestinatario
+      );
   }
 }

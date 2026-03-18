@@ -206,4 +206,22 @@ private static mezclarArray<T>(array: T[]): T[] {
                 la acción');
         }
     }
+
+    intercambiarCarta(partida: Game, remitenteId:number, destinatarioId:number,
+        numCartaRemitente: number, numCartaDestinatario: number
+    ){
+        if(remitenteId == partida.estadoGlobal.turn){
+            const cartaRemitente = partida.estadoGlobal.
+            jugadores[remitenteId].cartasMano[numCartaDestinatario]
+
+            const cartaDestinatario = partida.estadoGlobal.
+            jugadores[destinatarioId].cartasMano[destinatarioId]
+            
+            partida.estadoGlobal.jugadores[destinatarioId]
+            .cartasMano[destinatarioId] = cartaRemitente;
+
+            partida.estadoGlobal.jugadores[remitenteId].
+            cartasMano[numCartaRemitente] = cartaDestinatario;    
+        }
+    }
 }
