@@ -10,6 +10,9 @@ export class GameService {
   getGameById(gameId: string) : Game {
     return this.gameManager.getGameById(gameId);
   }
+  getRoomById(roomId: string) : Room {
+    return this.gameManager.getRoomById(roomId);
+  }
   inicioPartida(room: Room): Game {
     return this.gameManager.inicioPartida(room);
   }

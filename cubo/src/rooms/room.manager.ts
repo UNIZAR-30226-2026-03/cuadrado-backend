@@ -33,8 +33,9 @@ export class RoomManager {
 
     const roomCode = this.generateUniqueRoomCode();
     const players = new Map<string, Player>();
-    players.set(userId, this.createPlayer(userId, socketId, true));
-
+    const jugadorNuevo = this.createPlayer(userId, socketId, true, 0);
+    players.set(userId, jugadorNuevo);
+    
     const room: Room = {
       name: roomName,
       code: roomCode,
@@ -46,7 +47,7 @@ export class RoomManager {
     };
 
     this.rooms.set(room.code, room);
-    this.userToRoom.set(userId, room.code);
+    this.userToRoom.set(userId, room.code); 
 
     return room;
   }
@@ -71,7 +72,8 @@ export class RoomManager {
       throw new Error('Room is full');
     }
 
-    room.players.set(userId, this.createPlayer(userId, socketId, false));
+    room.players.set(userId, this.createPlayer(userId, socketId, false,
+        room.players.size));
     this.userToRoom.set(userId, room.code);
 
     return room;
@@ -302,6 +304,7 @@ export class RoomManager {
     userId: string,
     socketId: string,
     isHost: boolean,
+    idInRoom: number,
   ): Player {
     return {
       userId,
@@ -310,6 +313,7 @@ export class RoomManager {
       joinedAt: new Date(),
       connected: true,
       disconnectTimeout: undefined,
+      idInRoom: idInRoom,
     };
   }
 
