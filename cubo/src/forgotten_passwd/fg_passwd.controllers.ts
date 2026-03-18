@@ -1,4 +1,3 @@
- 
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
 import { fg_passwdService } from './fg_passwd.service';
 import { forgotten_passwdDto } from './dto/fg_passwd.dto';
