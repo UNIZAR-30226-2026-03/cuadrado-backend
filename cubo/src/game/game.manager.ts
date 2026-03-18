@@ -12,12 +12,21 @@ export class GameManager {
 ////////////////////////////////////////////////////////////////////////////////
 //                           ATRIBUTOS                                        //
 ////////////////////////////////////////////////////////////////////////////////
-    
+
     //representa el acceso a una sala mediante su identificador
     private readonly games = new Map<string, Game>();
     //representa las partidas activas por sala (solo puede haber 1)
     private readonly rooms = new Map<string, Room>();
 
+    getRoomById(roomId: string): Room {
+        const sala = this.rooms.get(roomId);
+
+        if (!sala) {
+            throw new Error('Partida no encontrada');
+         }
+
+        return sala;
+    }
 
     getGameById(gameId: string): Game {
         const partida = this.games.get(gameId);

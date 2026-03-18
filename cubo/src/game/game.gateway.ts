@@ -19,6 +19,8 @@ interface cartaPorPendientePayload{
   numCarta: number;
 }
 
+
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -31,10 +33,11 @@ export class GameGateway {
 
   constructor(private readonly gameService: GameService) {}
 
-  private notificarTodos(partida : Game){
+  private notificarTodos(partida : Game, ){
     this.server.to(partida.roomId).emit('actualizacion:partida',{
       partidaId : partida.gameId,
-      estadoGlobal: partida.estadoGlobal,
+      cartasBaraja: partida.estadoGlobal.cartasVigentes,
+      habilidades: partida.estadoGlobal.habilidadesActivadas,
     });
   }
 
@@ -69,7 +72,7 @@ export class GameGateway {
     try{
       const partida = this.gameService.getGameById(payload.gameId);
       this.gameService.descartarPendiente(partida);
-      this.notificarTodos(partida);
+      //this.notificarTodos(partida);
       this.server.to(client.id).emit('game:accion-aceptada', {
         gameId : payload.gameId,
       });
@@ -86,7 +89,7 @@ export class GameGateway {
     try{
       const partida = this.gameService.getGameById(payload.gameId);
       this.gameService.cartaPorPendiente(partida,payload.numCarta);
-      this.notificarTodos(partida);
+      //this.notificarTodos(partida);
       this.server.to(client.id).emit('game:accion-aceptada', {
         gameId : payload.gameId,
       });
