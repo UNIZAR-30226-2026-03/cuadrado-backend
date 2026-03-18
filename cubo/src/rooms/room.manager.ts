@@ -16,7 +16,9 @@ export interface CreateRoomInput {
 }
 
 export class RoomManager {
+  //mapa que relaciona roomID -> Room Objeto
   private readonly rooms = new Map<string, Room>();
+  //mapa que relaciona userID->roomID
   private readonly userToRoom = new Map<string, string>();
 
 
@@ -216,6 +218,15 @@ export class RoomManager {
     return room;
   }
 
+  /*
+  * Cuando se implemente la funcionalidad de las partidas habrá
+  * que guardar el estado de la partida en la base de datos.
+  */
+  pauseRoom(roomCode : string){
+    const room = this.getRoomByCode(roomCode);
+
+  }
+
   getRoomState(roomCode: string): RoomState | null {
     const room = this.getRoomByCode(roomCode);
 
@@ -307,4 +318,6 @@ export class RoomManager {
       disconnectTimeout: undefined,
     };
   }
+
+
 }

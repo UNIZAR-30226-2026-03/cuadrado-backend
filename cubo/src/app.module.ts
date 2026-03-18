@@ -7,9 +7,17 @@ import { PrismaModule } from './prisma/prisma.module';
 import { FgPasswdModule } from './forgotten_passwd/fg_passwd.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { SkinsModule } from './skins/skins.module';
+import { GameModule } from './game/game.module';
 
 @Module({
-  imports: [AppConfigModule, PrismaModule, AuthModule, FgPasswdModule],
+  imports: [
+    AppConfigModule,
+    PrismaModule,
+    AuthModule,
+    FgPasswdModule,
+    RoomsModule,
+    GameModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

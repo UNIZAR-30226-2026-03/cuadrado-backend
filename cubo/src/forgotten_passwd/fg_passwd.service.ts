@@ -1,8 +1,7 @@
-import { Injectable, BadRequestException, UnauthorizedException } from 
+import { Injectable, Logger, UnauthorizedException, InternalServerErrorException } from 
     "@nestjs/common";
 import { PrismaService } from "src/prisma/prisma.service";
 import { forgotten_passwdDto } from "./dto/fg_passwd.dto";
-import * as bcrypt from 'bcrypt';
 import { codeAuthDto } from "./dto/codeAuth.dto";
 import { MailerService } from "@nestjs-modules/mailer";
 import { randomBytes } from "crypto";
@@ -11,6 +10,8 @@ import { randomBytes } from "crypto";
 //logica de recuperación de contraseña
 @Injectable()
 export class fg_passwdService {
+    private readonly logger = new Logger(fg_passwdService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly mailer: MailerService,
@@ -43,11 +44,19 @@ export class fg_passwdService {
                         expirationTime: fechaFin},
              });
             
-            await this.mailer.sendMail({
-                        to: playload.email, 
-                        subject: "Codigo Verificacion",
-                        text: authCode
-                        })
+            try {
+                await this.mailer.sendMail({
+                            to: playload.email, 
+                            subject: "Codigo Verificacion",
+                            text: authCode
+                            })
+            } catch (error) {
+                const mailError = error instanceof Error ? error.message : String(error);
+                this.logger.error(`Fallo al enviar email de recuperacion a ${playload.email}: ${mailError}`);
+                throw new InternalServerErrorException(
+                    "No se pudo enviar el correo de recuperación. Revisa la configuración SMTP."
+                );
+            }
             return true;
 
             } else {
@@ -69,4 +78,3 @@ export class fg_passwdService {
         }    
     }
 }
-
