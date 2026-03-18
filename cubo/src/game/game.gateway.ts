@@ -9,14 +9,17 @@ import {
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
 import { Game } from './interfaces/game.interface';
+import { Card } from './interfaces/card.interface';
 
 interface robarCartaPayload {
   gameId: string;
+  idEnPartida: number,
 }
 
 interface cartaPorPendientePayload{
   gameId: string;
   numCarta: number;
+  idEnPartida: number,
 }
 
 
@@ -33,14 +36,26 @@ export class GameGateway {
 
   constructor(private readonly gameService: GameService) {}
 
-  private notificarTodos(partida : Game, ){
-    this.server.to(partida.roomId).emit('actualizacion:partida',{
+  private notificarTodosCartaRobada(partida : Game, ){
+    this.server.to(partida.roomId).emit('carta-robada',{
       partidaId : partida.gameId,
-      cartasBaraja: partida.estadoGlobal.cartasVigentes,
-      habilidades: partida.estadoGlobal.habilidadesActivadas,
+      jugadorRobado: partida.estadoGlobal.turn,
+    });
+  }
+ 
+  private notificarTodosDescartarPendiente(partida : Game, carta: Card){
+    this.server.to(partida.roomId).emit('descartar-pendiente',{
+      partidaId : partida.gameId,
+      carta: carta,
     });
   }
 
+  private notificarTodosDescartarEnTablero(partida : Game, carta: Card){
+    this.server.to(partida.roomId).emit('descartar-pendiente',{
+      partidaId : partida.gameId,
+      carta: carta,
+    });
+  }
   
   @SubscribeMessage('game:robar-carta')
   robarCarta(
@@ -49,16 +64,18 @@ export class GameGateway {
   ) {
     try {
       const partida = this.gameService.getGameById(payload.gameId);
-      this.gameService.robarCarta(partida);
+      this.gameService.robarCarta(partida, payload.idEnPartida);
 
-      this.notificarTodos(partida);
+      this.notificarTodosCartaRobada(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
         gameId : payload.gameId,
         cartaPendiente:
-          partida.estadoGlobal.jugadores[partida.estadoGlobal.turn]
+          partida.estadoGlobal.jugadores[payload.idEnPartida]
           .cartaPendiente,
       });
-      return {success: true};
+      return {
+        success: true,
+      };
     } catch (error) {
       throw new WsException(this.getErrorMessage(error));
     }
@@ -71,13 +88,15 @@ export class GameGateway {
   ){
     try{
       const partida = this.gameService.getGameById(payload.gameId);
-      this.gameService.descartarPendiente(partida);
-      //this.notificarTodos(partida);
-      this.server.to(client.id).emit('game:accion-aceptada', {
-        gameId : payload.gameId,
-      });
+      const cartaPendiente = this.gameService.descartarPendiente(partida,
+                                                          payload.idEnPartida);
+      this.notificarTodosDescartarPendiente(partida,cartaPendiente);
+      return {
+        succes: true,
+        gameId: partida.gameId,
+      }
     } catch {
-      throw new Error("Error inesperado");
+      throw new WsException("Error inesperado");
     }
   }
 
@@ -88,17 +107,24 @@ export class GameGateway {
   ){
     try{
       const partida = this.gameService.getGameById(payload.gameId);
-      this.gameService.cartaPorPendiente(partida,payload.numCarta);
-      //this.notificarTodos(partida);
-      this.server.to(client.id).emit('game:accion-aceptada', {
-        gameId : payload.gameId,
-      });
+      const carta = this.gameService.cartaPorPendiente(
+        partida,
+        payload.numCarta,
+        payload.idEnPartida,                                            
+      );
+      this.notificarTodosDescartarEnTablero(partida, carta);
+      return {
+        succes: true,
+        gameId: partida.gameId,
+      }
     } catch {
-      throw new Error("Error inesperado");
+      throw new WsException("Error inesperado");
     }
   }
 
-
+////////////////////////////////////////////////////////////////////////////////
+//                              HABILIDADES DE CARTAS                         //
+////////////////////////////////////////////////////////////////////////////////
 
 
 

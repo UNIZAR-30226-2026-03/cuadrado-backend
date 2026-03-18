@@ -14,18 +14,21 @@ export class GameService {
     return this.gameManager.getRoomById(roomId);
   }
   inicioPartida(room: Room): Game {
-    return this.gameManager.inicioPartida(room);
+    return this.gameManager.inicioPartida(room.players.size, room.code);
   }
 
-  robarCarta(partida: Game) {
-    return this.gameManager.robarCarta(partida);
+  robarCarta(partida: Game, idEnPartida: number) {
+    return this.gameManager.robarCarta(partida,idEnPartida);
   }
 
-  descartarPendiente(partida : Game) {
-    return this.gameManager.descartarCartaPendiente(partida);
+  descartarPendiente(partida : Game, idEnPartida: number) {
+    return this.gameManager.descartarCartaPendiente(partida,idEnPartida);
   }
-  cartaPorPendiente(partida: Game, numCarta: number){
-    return this.gameManager.descartarCartaPorPendiente(partida, numCarta);
+  cartaPorPendiente(partida: Game, numCarta: number, idEnPartida: number){
+    return this.gameManager.descartarCartaPorPendiente(
+      partida, 
+      numCarta,
+      idEnPartida,
+    );
   }
-  
 }

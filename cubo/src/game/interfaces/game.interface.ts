@@ -18,7 +18,6 @@ export interface GameState {
 }
 
 export interface PlayerState {
-    userId : string;
     cartasMano : Card[];
     habilidadesActivadas : number[];
     cartaPendiente?: Card;
