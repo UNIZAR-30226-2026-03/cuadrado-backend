@@ -19,6 +19,9 @@ export class RoomManager {
   private readonly rooms = new Map<string, Room>();
   private readonly userToRoom = new Map<string, string>();
 
+
+  // Crea una nueva sala y asigna al usuario como host. 
+  // Lanza errores si el usuario ya está en una sala o si el nombre de la sala es inválido.
   createRoom(userId: string, socketId: string, input: CreateRoomInput): Room {
     if (this.userToRoom.has(userId)) {
       throw new Error('User is already in a room');
@@ -49,6 +52,9 @@ export class RoomManager {
     return room;
   }
 
+  // Unir a una sala existente usando el código de la sala.
+  // Lanza errores si la sala no existe, si el usuario ya está en una sala, 
+  // si la sala ya ha comenzado o si la sala está llena.
   joinRoom(userId: string, socketId: string, roomCode: string): Room {
     const normalizedCode = this.normalizeRoomCode(roomCode);
     const room = this.rooms.get(normalizedCode);
