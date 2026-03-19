@@ -9,7 +9,7 @@ import { RoomsModule } from './rooms/rooms.module';
 import { SkinsModule } from './skins/skins.module';
 
 @Module({
-  imports: [AppConfigModule, PrismaModule, AuthModule, FgPasswdModule],
+  imports: [AppConfigModule, PrismaModule, AuthModule, FgPasswdModule, SkinsModule],
   controllers: [AppController],
   providers: [AppService],
 })
