@@ -152,11 +152,19 @@ export class SkinsService {
 
         if (!user) throw new NotFoundException('Usuario no encontrado');
 
-        // Devolver URL?????
+        const avatar = user.equippedAvatarId ? await this.prisma.skin.findUnique({
+            where: { name: user.equippedAvatarId } }) : null;
+        const carta = user.equippedCardId ? await this.prisma.skin.findUnique({
+            where: { name: user.equippedCardId } }) : null;
+        const tapete = user.equippedTapeteId ? await this.prisma.skin.findUnique({
+            where: { name: user.equippedTapeteId } }) : null;
+
+
+        // Devolver URL de la carta
         return {
-            avatar: user.equippedAvatarId,
-            carta: user.equippedCardId,
-            tapete: user.equippedTapeteId
+            avatar: avatar?.url || null,
+            carta: carta?.url || null,
+            tapete: tapete?.url || null
         };
     }
 }
