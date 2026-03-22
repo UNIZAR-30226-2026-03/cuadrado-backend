@@ -86,7 +86,8 @@ model PausedGamePlayer {
 }
 
 model Skin {
-  name  String @id
+  id     String @id @default(cuid())
+  name  String
   type  String  // "Carta", "Avatar" o "Tapete"
   price Int
   url   String
@@ -101,7 +102,7 @@ model UserSkin {
   skinId String @map("skin_id")
 
   user User @relation(fields: [userId], references: [username])
-  skin Skin @relation(fields: [skinId], references: [name])
+  skin Skin @relation(fields: [skinId], references: [id])
 
   @@id([userId, skinId])
   @@map("USER_SKINS")
