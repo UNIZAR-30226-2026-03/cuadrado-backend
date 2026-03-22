@@ -38,7 +38,7 @@ export class SkinsService {
     async buySkin(username: string, skinId: string) {
         return this.prisma.$transaction(async (tx) => {
             // a) Verificamos la skin (dentro de la transacción)
-            const skin = await tx.skin.findUnique({ where: { name: skinId } });
+            const skin = await tx.skin.findUnique({ where: { id: skinId } });
             if (!skin) throw new NotFoundException('La skin no existe');
 
             // b) Verificamos si ya la tiene
@@ -91,7 +91,7 @@ export class SkinsService {
         }
 
         const skin = await this.prisma.skin.findUnique({
-            where: { name: skinId },
+            where: { id: skinId },
         });
 
         if (!skin) {
@@ -153,11 +153,11 @@ export class SkinsService {
         if (!user) throw new NotFoundException('Usuario no encontrado');
 
         const avatar = user.equippedAvatarId ? await this.prisma.skin.findUnique({
-            where: { name: user.equippedAvatarId } }) : null;
+            where: { id: user.equippedAvatarId } }) : null;
         const carta = user.equippedCardId ? await this.prisma.skin.findUnique({
-            where: { name: user.equippedCardId } }) : null;
+            where: { id: user.equippedCardId } }) : null;
         const tapete = user.equippedTapeteId ? await this.prisma.skin.findUnique({
-            where: { name: user.equippedTapeteId } }) : null;
+            where: { id: user.equippedTapeteId } }) : null;
 
 
         // Devolver URL de la carta
