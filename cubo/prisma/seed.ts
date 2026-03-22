@@ -1,7 +1,21 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
-const prisma = new PrismaClient();
+import { Pool } from 'pg';
+import { PrismaPg } from '@prisma/adapter-pg';
+
+// Crear pool de conexión
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+
+// Crear adapter
+const adapter = new PrismaPg(pool);
+
+// Pasarlo al cliente
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  await prisma.skin.deleteMany({}); // Borrar para que no dé error el repoblar
   await prisma.skin.createMany({
     data: [
       // CARTAS

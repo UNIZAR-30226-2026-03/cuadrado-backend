@@ -6,6 +6,8 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
+    "db:init": "npx prisma generate && npx prisma db push && npx prisma db seed",
+    "db:seed": "npx prisma db seed",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -61,6 +63,7 @@
     "@types/passport-jwt": "^4.0.1",
     "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.2",
+    "dotenv": "^17.3.1",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
