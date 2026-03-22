@@ -2,7 +2,7 @@ import { GameState } from './interfaces/game.interface';
 import { PlayerState } from './interfaces/game.interface';
 import { Game } from './interfaces/game.interface';
 //import { RoomManager } from "src/rooms/room.manager";
-import { Card, PaloCarta } from './interfaces/card.interface';
+import { Card, PaloCarta, Habilidad } from './interfaces/card.interface';
 import { Room } from '../rooms/interfaces/room.interface';
 
 const ROOM_CODE_LENGTH = 6;
@@ -41,7 +41,7 @@ export class GameManager {
   private static crearCarta(
     carta: number,
     palo: PaloCarta,
-    habilidad = 'ninguna',
+    habilidad: Habilidad = 'ninguna',
   ): Card {
     return {
       carta,
@@ -61,7 +61,7 @@ export class GameManager {
     }
 
     for (let i = 1; i <= 3; i++) {
-      baraja.push(GameManager.crearCarta(52 + i, 'jocker'));
+      baraja.push(GameManager.crearCarta(52 + i, 'joker'));
     }
     return baraja;
   }
@@ -249,5 +249,27 @@ export class GameManager {
         numCartaRemitente
       ] = cartaDestinatario;
     }
+  }
+
+  /////////////////////////////////////////////////
+  //    HABILIDADES                             //
+  ///////////////////////////////////////////////
+  usarHabilidadAS(
+    partida: Game,
+    remitenteId: number,
+    destinatarioId: number,
+  ): void {
+    //AS = intercambia todas tus cartas por todas las cartas de otro jugador
+
+    const aux = partida.estadoGlobal.jugadores[remitenteId].cartasMano;
+    partida.estadoGlobal.jugadores[remitenteId].cartasMano =
+      partida.estadoGlobal.jugadores[destinatarioId].cartasMano;
+    partida.estadoGlobal.jugadores[destinatarioId].cartasMano = aux;
+  }
+
+  usarHabilidad10(partida: Game, idJugador: number, numCarta: number): Card {
+    //10 = permite ver una de tus cartas
+
+    return partida.estadoGlobal.jugadores[idJugador].cartasMano[numCarta];
   }
 }

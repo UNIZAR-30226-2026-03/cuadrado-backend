@@ -9,7 +9,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
 import { Game } from './interfaces/game.interface';
-import { Card } from './interfaces/card.interface';
+import { Card, Habilidad } from './interfaces/card.interface';
 import { Room } from 'src/rooms/interfaces/room.interface';
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -36,6 +36,14 @@ interface intercambiarCartaPayload {
   numCartaRemitente: number;
   destinatarioId: number;
   numCartaDestinatario: number;
+}
+
+interface usarHabilidadPayload {
+  gameId: string;
+  idJugador: number;
+  habilidad: Habilidad;
+  numCarta?: number;
+  destinatarioId?: number;
 }
 
 @WebSocketGateway({
@@ -203,5 +211,82 @@ export class GameGateway {
     }
 
     return 'Error inesperado';
+  }
+
+  @SubscribeMessage('game:usar-habilidad-as')
+  usarHabilidadAS(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: usarHabilidadPayload,
+  ) {
+    try {
+      const partida = this.gameService.getGameById(payload.gameId);
+      const cartaDescartada = this.gameService.descartarPendiente(
+        partida,
+        payload.idJugador,
+      ); // descartar AS
+
+      if (cartaDescartada.carta !== 1) {
+        throw new Error('La carta descartada no es un AS');
+      }
+      if (payload.destinatarioId === undefined) {
+        throw new Error('No se ha especificado el destinatario');
+      }
+
+      this.notificarTodosDescartarPendiente(partida, cartaDescartada);
+      this.gameService.usarHabilidadAS(
+        partida,
+        payload.idJugador,
+        payload.destinatarioId,
+      );
+
+      this.notificarTodosCambioCartas(
+        partida,
+        payload.idJugador,
+        payload.destinatarioId,
+      );
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      throw new WsException(this.getErrorMessage(error));
+    }
+  }
+
+  @SubscribeMessage('game:usar-habilidad-10')
+  usarHabilidad10(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: usarHabilidadPayload,
+  ) {
+    try {
+      const partida = this.gameService.getGameById(payload.gameId); // buscar partida
+      const cartaDescartada = this.gameService.descartarPendiente(
+        partida,
+        payload.idJugador,
+      ); // descartar 10
+
+      if (cartaDescartada.carta !== 10) {
+        throw new Error('La carta descartada no es un 10');
+      }
+
+      this.notificarTodosDescartarPendiente(partida, cartaDescartada);
+
+      if (payload.numCarta === undefined) {
+        throw new Error('No se ha especificado el número de carta');
+      }
+
+      const verCarta = this.gameService.usarHabilidad10(
+        partida,
+        payload.idJugador,
+        payload.numCarta,
+      );
+
+      return {
+        success: true,
+        cartaSeleccionada: verCarta,
+      };
+    } catch (error) {
+      throw new WsException(this.getErrorMessage(error));
+    }
   }
 }
