@@ -71,6 +71,7 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: Socket): void {
+    //leo directamente para que no sale excepción 
     const userId = client.data?.userId as string | undefined;
 
     if (!userId) {
