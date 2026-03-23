@@ -9,10 +9,10 @@ export class SkinsService {
     //    ordenadas por tipo y luego por nombre
     async getStoreSkins() {
         return this.prisma.skin.findMany({
-            orderBy: {
-                type: 'asc',
-                name: 'asc'
-            }
+            orderBy: [
+                { type: 'asc' },
+                { name: 'asc' },
+            ],
         });
     }
 

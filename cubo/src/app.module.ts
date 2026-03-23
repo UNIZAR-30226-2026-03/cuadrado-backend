@@ -17,6 +17,7 @@ import { GameModule } from './game/game.module';
     FgPasswdModule,
     RoomsModule,
     GameModule,
+    SkinsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
