@@ -64,12 +64,6 @@ export class GameGateway {
     });
   }
 
-  private notificarTodosDescartarEnTablero(partida : Game, carta: Card){
-    this.server.to(partida.roomId).emit('descartar-pendiente',{
-      partidaId : partida.gameId,
-      carta: carta,
-    });
-  }
 
   private notificarTodosComienzoPartida(partida: Game){
     this.server.to(partida.roomId).emit('inicio-partida',{
@@ -94,7 +88,7 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
   ){
     //comprobar que el usuario que solicita iniciar la partida sea el host
-    const userId = client.data.userId;
+    const userId = this.getUserId(client);
     const sala = this.roomsService.getRoomByUserId(userId);
     if(!sala){
       throw new WsException('No hay ninguna sala registrada para el usuario \
@@ -123,7 +117,7 @@ export class GameGateway {
         throw new WsException('No existe partida asociada con dicho \
           Identificador');
       }
-      const userId = client.data.userId;
+      const userId = this.getUserId(client);
       this.gameService.robarCarta(partida, userId);
 
       this.notificarTodosCartaRobada(partida);
@@ -145,7 +139,7 @@ export class GameGateway {
   ){
     try{
       const partida = this.gameService.getGameById(payload.gameId);
-      const userId = client.data.userId;
+      const userId = this.getUserId(client);
       const cartaPendiente = this.gameService.descartarPendiente(partida,userId);
       
       this.notificarTodosDescartarPendiente(partida,cartaPendiente);
@@ -165,13 +159,13 @@ export class GameGateway {
   ){
     try{
       const partida = this.gameService.getGameById(payload.gameId);
-      const userId = client.data.userId;
+      const userId = this.getUserId(client);
       const carta = this.gameService.cartaPorPendiente(
         partida,
         payload.numCarta,
         userId,                                            
       );
-      this.notificarTodosDescartarEnTablero(partida, carta);
+      this.notificarTodosDescartarPendiente(partida, carta);
       return {
         succes: true,
         gameId: partida.gameId,
@@ -187,7 +181,7 @@ export class GameGateway {
     @MessageBody() payload: intercambiarCartaPayload,
   ){
     const partida = this.gameService.getGameById(payload.gameId);
-    const remitenteId = client.data.userId;
+    const remitenteId = this.getUserId(client);
     this.gameService.intercambiarCarta(partida, remitenteId,
       payload.destinatarioId, payload.numCartaRemitente, 
       payload.numCartaDestinatario);
@@ -203,6 +197,16 @@ export class GameGateway {
 
 
 
+
+  private getUserId(client: Socket): string {
+    const userId = client.data?.userId as string | undefined;
+
+    if (!userId) {
+      throw new WsException('Unauthorized socket');
+    }
+
+    return userId;
+  }
 
   private getErrorMessage(error: unknown): string {
     if (error instanceof Error) {
