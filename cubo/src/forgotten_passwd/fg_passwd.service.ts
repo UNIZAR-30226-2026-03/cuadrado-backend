@@ -3,8 +3,10 @@ import { Injectable, Logger, UnauthorizedException, InternalServerErrorException
 import { PrismaService } from "src/prisma/prisma.service";
 import { forgotten_passwdDto } from "./dto/fg_passwd.dto";
 import { codeAuthDto } from "./dto/codeAuth.dto";
+import { resetPasswordDto } from "./dto/reset-password.dto";
 import { MailerService } from "@nestjs-modules/mailer";
 import { randomBytes } from "crypto";
+import * as bcrypt from "bcrypt";
 
 
 //logica de recuperación de contraseña
@@ -23,10 +25,17 @@ export class fg_passwdService {
             .slice(0,len);
     }
 
-    async notify(playload: forgotten_passwdDto){
+    private async clearRecoveryCode(email: string) {
+        await this.prisma.user.update({
+            where: { email },
+            data: { auth_code: null, expirationTime: null, creationTime: null },
+        });
+    }
+
+    async notify(payload: forgotten_passwdDto){
         //verificar que existe un usuario con ese mail
         const existingUser = await this.prisma.user.findUnique(
-            {where: { email: playload.email}}
+            {where: { email: payload.email}}
         )
 
         if(existingUser){
@@ -46,13 +55,13 @@ export class fg_passwdService {
             
             try {
                 await this.mailer.sendMail({
-                            to: playload.email, 
+                            to: payload.email, 
                             subject: "Codigo Verificacion",
                             text: authCode
                             })
             } catch (error) {
                 const mailError = error instanceof Error ? error.message : String(error);
-                this.logger.error(`Fallo al enviar email de recuperacion a ${playload.email}: ${mailError}`);
+                this.logger.error(`Fallo al enviar email de recuperacion a ${payload.email}: ${mailError}`);
                 throw new InternalServerErrorException(
                     "No se pudo enviar el correo de recuperación. Revisa la configuración SMTP."
                 );
@@ -65,16 +74,45 @@ export class fg_passwdService {
         
         }
 
-    async response(playload: codeAuthDto){
+    async response(payload: codeAuthDto){
 
-        const user = await this.prisma.user.findFirst({
-                where: {email: playload.email}});
+        const user = await this.prisma.user.findUnique({
+                where: {email: payload.email}});
 
-        if(!user || user.auth_code != playload.authCode){
+        // Se oculta la existencia de usuarios tratando cualquier caso invalido con el mismo mensaje.
+        if (!user) {
+            throw new UnauthorizedException("El código de verificación ha expirado");
+        }
+
+        if (!user.expirationTime || user.expirationTime < new Date()) {
+            await this.clearRecoveryCode(payload.email);
+            throw new UnauthorizedException("El código de verificación ha expirado");
+        }
+
+        if (user.auth_code !== payload.authCode) {
             throw new UnauthorizedException
                             ("El código de verificación es incorrecto");
-        } else {
-            return true;
-        }    
+        }
+
+        await this.clearRecoveryCode(payload.email);
+        return true;
+    }
+
+    async resetPassword(payload: resetPasswordDto) {
+        await this.response({
+            email: payload.email,
+            authCode: payload.authCode,
+        });
+
+        const newPasswordHash = await bcrypt.hash(payload.newPassword, 10);
+
+        await this.prisma.user.update({
+            where: { email: payload.email },
+            data: {
+                passwordHash: newPasswordHash,
+            },
+        });
+
+        return { message: "Contraseña restablecida correctamente" };
     }
 }

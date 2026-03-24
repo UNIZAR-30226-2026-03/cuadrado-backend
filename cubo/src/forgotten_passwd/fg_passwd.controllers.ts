@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post } from '@nestjs/common';
 import { fg_passwdService } from './fg_passwd.service';
 import { forgotten_passwdDto } from './dto/fg_passwd.dto';
 import { codeAuthDto } from './dto/codeAuth.dto';
+import { resetPasswordDto } from './dto/reset-password.dto';
 
 @Controller('forgotten_passwd')
 export class FgPasswdController {
@@ -19,11 +20,19 @@ export class FgPasswdController {
     };
   }
 
+  //DEPREACTED; se usa resetPassword directamente.
   // 2) Verificar código: valida email + authCode
-  @Post('verify')
+  // @Post('verify')
+  // @HttpCode(200)
+  // async verify(@Body() payload: codeAuthDto) {
+  //   await this.fgPasswdService.response(payload);
+  //   return { ok: true, message: 'Código verificado correctamente.' };
+  // }
+
+  @Post('reset-password')
   @HttpCode(200)
-  async verify(@Body() payload: codeAuthDto) {
-    await this.fgPasswdService.response(payload);
-    return { ok: true, message: 'Código verificado correctamente.' };
+  async resetPassword(@Body() payload: resetPasswordDto) {
+    const result = await this.fgPasswdService.resetPassword(payload);
+    return { ok: true, ...result };
   }
 }
