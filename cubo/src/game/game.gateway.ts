@@ -35,6 +35,11 @@ interface intercambiarCartaPayload{
   numCartaDestinatario: number,
 }
 
+interface verCartaPayload{
+  gameId: string,
+  indexCarta: number,
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -144,7 +149,7 @@ export class GameGateway {
       
       this.notificarTodosDescartarPendiente(partida,cartaPendiente);
       return {
-        succes: true,
+        success: true,
         gameId: partida.gameId,
       }
     } catch {
@@ -167,7 +172,7 @@ export class GameGateway {
       );
       this.notificarTodosDescartarPendiente(partida, carta);
       return {
-        succes: true,
+        success: true,
         gameId: partida.gameId,
       }
     } catch {
@@ -187,6 +192,32 @@ export class GameGateway {
       payload.numCartaDestinatario);
     this.notificarTodosCambioCartas(partida,remitenteId, 
       payload.destinatarioId);
+
+  }
+
+  @SubscribeMessage('game:ver-carta')
+  verCarta(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: verCartaPayload
+  ) {
+    try {
+      const partida = this.gameService.getGameById(payload.gameId);
+      const userId = this.getUserId(client);
+      const carta = this.gameService.verCarta(partida, payload.indexCarta, userId);
+
+      this.server.to(client.id).emit('carta-revelada',{
+        gameId: payload.gameId,
+        carta: carta,
+      });
+
+      return {
+        success: true,
+        gameId: partida.gameId,
+      };
+    } catch (error) {
+      throw new WsException("Error inesperado");
+    }
+
 
   }
 ////////////////////////////////////////////////////////////////////////////////

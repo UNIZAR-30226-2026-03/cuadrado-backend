@@ -49,4 +49,8 @@ export class GameService {
         numCartaDestinatario
       );
   }
+
+  verCarta(partida: Game, numCarta: number, userId: string){
+    return this.gameManager.verCarta(partida, numCarta, userId);
+  } 
 }

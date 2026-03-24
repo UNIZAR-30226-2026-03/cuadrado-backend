@@ -254,5 +254,30 @@ private static mezclarArray<T>(array: T[]): T[] {
             throw new Error('No es el turno del jugador que intenta jugar');
         }
     
+    }
+
+    verCarta(partida: Game, numCarta: number, userId: string) : Card{
+
+         const turno = partida.estadoGlobal.turn;
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        if(userId == turnUserId){
+            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(userId);
+            if (idEnPartida == -1){
+                throw new Error('El usuario no está registrado en la \
+                    partida');
+            }
+            const cartaAVer = partida.estadoGlobal.jugadores[idEnPartida]
+            .cartasMano[numCarta];
+
+            if(!cartaAVer){
+                throw new Error('No tienes en la mano la carta seleccionada');
+            }
+           
+            return cartaAVer;
+
+        } else {
+            throw new Error('No es el turno del jugador que intenta jugar');
         }
+    }
 }
