@@ -11,16 +11,17 @@ import { GameService } from './game.service';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
 import { Room } from 'src/rooms/interfaces/room.interface';
+import { RoomsService } from 'src/rooms/rooms.service';
+import { RoomManager } from 'src/rooms/room.manager';
+import { use } from 'passport';
 
 interface robarCartaPayload {
   gameId: string;
-  idEnPartida: number,
 }
 
 interface cartaPorPendientePayload{
   gameId: string;
   numCarta: number;
-  idEnPartida: number,
 }
 
 interface iniciarPartidaPayload {
@@ -29,9 +30,8 @@ interface iniciarPartidaPayload {
 
 interface intercambiarCartaPayload{
   gameId : string,
-  remitenteId: number,
   numCartaRemitente: number,
-  destinatarioId: number,
+  destinatarioId: string,
   numCartaDestinatario: number,
 }
 
@@ -45,7 +45,10 @@ export class GameGateway {
   @WebSocketServer()
   server: Server;
 
-  constructor(private readonly gameService: GameService) {}
+  constructor(
+      private readonly gameService: GameService, 
+      private readonly roomsService : RoomsService,
+  ) {}
 
   private notificarTodosCartaRobada(partida : Game, ){
     this.server.to(partida.roomId).emit('carta-robada',{
@@ -69,13 +72,13 @@ export class GameGateway {
   }
 
   private notificarTodosComienzoPartida(partida: Game){
-    this.server.to(partida.roomId).emit('descartar-pendiente',{
+    this.server.to(partida.roomId).emit('inicio-partida',{
       partidaId : partida.gameId,
     });
   }
 
-  private notificarTodosCambioCartas(partida: Game, idRemitente: number,
-    idDestinatario: number
+  private notificarTodosCambioCartas(partida: Game, idRemitente: string,
+    idDestinatario: string
   ){
      this.server.to(partida.roomId).emit('intercambio-cartas',{
       partidaId : partida.gameId,
@@ -83,23 +86,32 @@ export class GameGateway {
       destinatario: idDestinatario,
     });
   }
+
+  //FIX: ahora se comprueba que el usuario que solicita iniciar la partida sea
+  //el host de la misma.
   @SubscribeMessage('iniciar-partida')
   iniciarPartida(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: iniciarPartidaPayload,
   ){
-      if(payload.sala.started == false){
-        const partida = this.gameService.inicioPartida(payload.sala);
-        this.notificarTodosComienzoPartida(partida);
-        return{
-          success: true
-        }
-      }else{
-        throw new Error('La partida ya ha sido empezada');
+    //comprobar que el usuario que solicita iniciar la partida sea el host
+    const userId = client.data.userId;
+    const sala = this.roomsService.getRoomByUserId(userId);
+    if(!sala){
+      throw new WsException('No hay ninguna sala registrada para el usuario \
+        que intenta iniciar partida');
+    }
+    if(sala.hostId == userId && sala.started == false){
+      const partida = this.gameService.inicioPartida(sala);
+      this.notificarTodosComienzoPartida(partida);
+       return{
+        success: true
       }
+    } else{
+      throw new Error('Ha habido un error inesperado al iniciar la partida');
+    }
   }
 
-
+  //FIX: el front no tiene que saber la carta que está pendiente
   @SubscribeMessage('game:robar-carta')
   robarCarta(
     @ConnectedSocket() client: Socket,
@@ -107,14 +119,16 @@ export class GameGateway {
   ) {
     try {
       const partida = this.gameService.getGameById(payload.gameId);
-      this.gameService.robarCarta(partida, payload.idEnPartida);
+      if(!partida){
+        throw new WsException('No existe partida asociada con dicho \
+          Identificador');
+      }
+      const userId = client.data.userId;
+      this.gameService.robarCarta(partida, userId);
 
       this.notificarTodosCartaRobada(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
         gameId : payload.gameId,
-        cartaPendiente:
-          partida.estadoGlobal.jugadores[payload.idEnPartida]
-          .cartaPendiente,
       });
       return {
         success: true,
@@ -131,8 +145,9 @@ export class GameGateway {
   ){
     try{
       const partida = this.gameService.getGameById(payload.gameId);
-      const cartaPendiente = this.gameService.descartarPendiente(partida,
-                                                          payload.idEnPartida);
+      const userId = client.data.userId;
+      const cartaPendiente = this.gameService.descartarPendiente(partida,userId);
+      
       this.notificarTodosDescartarPendiente(partida,cartaPendiente);
       return {
         succes: true,
@@ -150,10 +165,11 @@ export class GameGateway {
   ){
     try{
       const partida = this.gameService.getGameById(payload.gameId);
+      const userId = client.data.userId;
       const carta = this.gameService.cartaPorPendiente(
         partida,
         payload.numCarta,
-        payload.idEnPartida,                                            
+        userId,                                            
       );
       this.notificarTodosDescartarEnTablero(partida, carta);
       return {
@@ -167,13 +183,15 @@ export class GameGateway {
   
   @SubscribeMessage('intercambiar-carta')
   intercambiarCarta(
+    @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarCartaPayload,
   ){
     const partida = this.gameService.getGameById(payload.gameId);
-    this.gameService.intercambiarCarta(partida, payload.remitenteId,
+    const remitenteId = client.data.userId;
+    this.gameService.intercambiarCarta(partida, remitenteId,
       payload.destinatarioId, payload.numCartaRemitente, 
       payload.numCartaDestinatario);
-    this.notificarTodosCambioCartas(partida,payload.remitenteId, 
+    this.notificarTodosCambioCartas(partida,remitenteId, 
       payload.destinatarioId);
 
   }

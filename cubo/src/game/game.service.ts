@@ -13,24 +13,36 @@ export class GameService {
   getRoomById(roomId: string) : Room {
     return this.gameManager.getRoomById(roomId);
   }
+  //TODO: pasar room.players entero para hacer un mapa y facilitar las 
+  // comprobaciones
   inicioPartida(room: Room): Game {
-    return this.gameManager.inicioPartida(room.players.size, room.code);
-  }
+    const playerUserIds = Array.from(room.players.values()).map(
+      (player) => player.userId,
+    );
 
-  robarCarta(partida: Game, idEnPartida: number) {
-    return this.gameManager.robarCarta(partida,idEnPartida);
-  }
-
-  descartarPendiente(partida : Game, idEnPartida: number) {
-    return this.gameManager.descartarCartaPendiente(partida,idEnPartida);
-  }
-  cartaPorPendiente(partida: Game, numCarta: number, idEnPartida: number){
-    return this.gameManager.descartarCartaPorPendiente(
-      partida, numCarta, idEnPartida,
+    return this.gameManager.inicioPartida(
+      room.players.size,
+      room.code,
+      playerUserIds,
     );
   }
 
-  intercambiarCarta(partida: Game, remitenteId:number, destinatarioId:number,
+  robarCarta(partida: Game, userId: string) {
+    return this.gameManager.robarCarta(partida,userId);
+  }
+
+  descartarPendiente(partida : Game, userId: string) {
+    return this.gameManager.descartarCartaPendiente(partida,userId);
+  }
+  cartaPorPendiente(partida: Game, numCarta: number, userId: string){
+    return this.gameManager.descartarCartaPorPendiente(
+      partida, 
+      numCarta, 
+      userId,
+    );
+  }
+
+  intercambiarCarta(partida: Game, remitenteId:string, destinatarioId:string,
     numCartaRemitente: number, numCartaDestinatario: number){
       return this.gameManager.intercambiarCarta(
         partida, remitenteId, destinatarioId, numCartaRemitente,

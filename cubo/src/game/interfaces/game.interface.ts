@@ -14,6 +14,7 @@ export interface GameState {
     cartasVigentes : Card[];
     cartasDescartadas : Card[];
     habilidadesActivadas : number[];
+    turnoJugadores : string[];
     jugadores : PlayerState[];
 }
 

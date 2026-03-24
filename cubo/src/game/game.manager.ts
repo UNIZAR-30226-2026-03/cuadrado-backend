@@ -113,19 +113,21 @@ private static mezclarArray<T>(array: T[]): T[] {
     }
   }
     
-    //A partir de una Room crea el objeto Game Correspondiente
-    inicioPartida(numJugadores : number, codigoSala : string) : Game {
-        //TODO: comprobar que la sala no haya empezado la partida desde 
-        //room.gateway
-        //generar las cartas de la baraja aleatoriamente
+    inicioPartida(
+        numJugadores : number, 
+        codigoSala : string,
+        idJugadores: string[],
+        ) : Game {
         const aux : Card[] = GameManager.rellenarBaraja();
         const baraja : Card[] = GameManager.mezclarArray(aux);
         const gameCode = this.generateUniqueRoomCode();
-        const estadoJugadores: PlayerState[] = new Array(numJugadores).fill({
-                userId: '',
+        const estadoJugadores: PlayerState[] = Array.from(
+            { length: numJugadores },
+            () => ({
                 cartasMano: [],
                 habilidadesActivadas: [],
-        });
+            }),
+        );
 
         GameManager.asignarCartasJugadores(baraja, estadoJugadores,
                                 numJugadores);
@@ -134,6 +136,7 @@ private static mezclarArray<T>(array: T[]): T[] {
             cartasVigentes: baraja,
             cartasDescartadas: [],
             habilidadesActivadas: [],
+            turnoJugadores : idJugadores,
             jugadores: estadoJugadores,
         };
 
@@ -147,81 +150,109 @@ private static mezclarArray<T>(array: T[]): T[] {
         this.games.set(gameCode, partida);
         return partida;
     }
-    //TODO: Añadir a las funciones el idEnPartida para saber quién realiza la
-    //acción
-    //un jugador roba una carta y se actualiza el estado de la partida
-    robarCarta(partida : Game, id: number) {
-        if(id == partida.estadoGlobal.turn){
+
+    //FIX de seguridad
+    robarCarta(partida : Game, userId :string) {
+        //comprobar que sea el turno del jugador
+        const turno = partida.estadoGlobal.turn;
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        if(userId == turnUserId){
+            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(userId);
             const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
             if(!cartaRobada){
                 throw new Error("No quedan cartas para robar")
             }
-            partida.estadoGlobal.jugadores[id].cartaPendiente
+            partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente
                 = cartaRobada;
         } else {
-            throw new Error("No es el turno del jugador que intenta realizar  \
-                    la acción");
-        }       
+            throw new Error('No es el turno del jugador que intenta jugar');
+        }      
     }
 
-    descartarCartaPendiente(partida: Game, id : number) : Card{
-        if(id == partida.estadoGlobal.turn){
-            const cartaPendiente = partida.estadoGlobal.jugadores[id]
+    descartarCartaPendiente(partida: Game, userId : string) : Card{
+        const turno = partida.estadoGlobal.turn;
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        if(userId == turnUserId){
+            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(userId);
+            const cartaPendiente = partida.estadoGlobal.jugadores[idEnPartida]
                                                             .cartaPendiente;
-            if(cartaPendiente){
-               partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
-               partida.estadoGlobal.jugadores[id].cartaPendiente = undefined;
-               return cartaPendiente;                                                  
-            } else {
-                throw new Error("No había carta pendiente");
+            if(!cartaPendiente){
+                throw new Error('No hay carta pendiente');
             }
+            partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
+            partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente 
+                = undefined;
+            return cartaPendiente; 
         } else {
-            throw new Error('No es el turno del jugador que intenta realizar \
-                la acción');
-        }
-        
+            throw new Error('No es el turno del jugador que intenta jugar');
+        }     
     }
 
-    descartarCartaPorPendiente(partida: Game, numCarta: number, id: number)
+    descartarCartaPorPendiente(partida: Game, numCarta: number, userId: string)
     : Card{
-        if(numCarta < 0 || numCarta > 3){
-            throw new Error("El número de carta se sale del rango 0-3")
-        }
-        if(id == partida.estadoGlobal.turn){
-            const cartaPendiente = partida.estadoGlobal.jugadores[id]
+        const turno = partida.estadoGlobal.turn;
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        if(userId == turnUserId){
+            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(userId);
+            const cartaPendiente = partida.estadoGlobal.jugadores[idEnPartida]
                                                             .cartaPendiente;
-            const cartaDescartar = partida.estadoGlobal.jugadores[id]
-                                                        .cartasMano[numCarta];
-            if(cartaPendiente){
-               partida.estadoGlobal.cartasDescartadas.push(cartaDescartar);
-               partida.estadoGlobal.jugadores[id].cartasMano[numCarta]
-                = cartaPendiente;        
-               partida.estadoGlobal.jugadores[id].cartaPendiente = undefined;  
-               return cartaDescartar;                                         
-            } else {
-                throw new Error("No había carta pendiente");
+            if(!cartaPendiente){
+                throw new Error('No hay carta pendiente');
             }
+            const cartaDescartar = partida.estadoGlobal.jugadores[idEnPartida]
+                                                        .cartasMano[numCarta];
+            if(!cartaDescartar){
+                throw new Error('No tienes esa carta en la mano');
+            }
+            partida.estadoGlobal.cartasDescartadas.push(cartaDescartar);
+            partida.estadoGlobal.jugadores[idEnPartida].cartasMano[numCarta]
+                = cartaPendiente;  
+            partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;  
+            return cartaDescartar;
         } else {
-            throw new Error('No es el turno del jugador que intenta realizar \
-                la acción');
+            throw new Error('No es el turno del jugador que intenta jugar');
         }
     }
 
-    intercambiarCarta(partida: Game, remitenteId:number, destinatarioId:number,
+    intercambiarCarta(partida: Game, remitenteId:string, destinatarioId:string,
         numCartaRemitente: number, numCartaDestinatario: number
-    ){
-        if(remitenteId == partida.estadoGlobal.turn){
-            const cartaRemitente = partida.estadoGlobal.
-            jugadores[remitenteId].cartasMano[numCartaDestinatario]
+    ){  
+        const turno = partida.estadoGlobal.turn;
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        if(remitenteId == turnUserId){
+            const idEnPartidaR = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(remitenteId);
+            const idEnPartidaD = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(destinatarioId);
+            if (idEnPartidaD == -1){
+                throw new Error('El destinatario no está registrado en la \
+                    partida');
+            }
+            const cartaRemitente = partida.estadoGlobal.jugadores[idEnPartidaR]
+            .cartasMano[numCartaRemitente];
 
-            const cartaDestinatario = partida.estadoGlobal.
-            jugadores[destinatarioId].cartasMano[destinatarioId]
+            if(!cartaRemitente){
+                throw new Error('No tienes en la mano la carta seleccionada');
+            }
+            const cartaDestinatario = partida.estadoGlobal.jugadores[idEnPartidaD]
+            .cartasMano[numCartaDestinatario]
+            if(!cartaDestinatario){
+                throw new Error('El destinatario no tiene en la mano la carta \
+                    seleccionada');
+            }
+
+            partida.estadoGlobal.jugadores[idEnPartidaD]
+            .cartasMano[numCartaDestinatario] = cartaRemitente;
             
-            partida.estadoGlobal.jugadores[destinatarioId]
-            .cartasMano[destinatarioId] = cartaRemitente;
+            partida.estadoGlobal.jugadores[idEnPartidaR]
+            .cartasMano[numCartaRemitente] = cartaDestinatario;
 
-            partida.estadoGlobal.jugadores[remitenteId].
-            cartasMano[numCartaRemitente] = cartaDestinatario;    
+        } else {
+            throw new Error('No es el turno del jugador que intenta jugar');
         }
-    }
+    
+        }
 }
