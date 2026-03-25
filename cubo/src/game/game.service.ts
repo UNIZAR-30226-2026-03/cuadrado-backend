@@ -53,4 +53,13 @@ export class GameService {
   verCarta(partida: Game, numCarta: number, userId: string){
     return this.gameManager.verCarta(partida, numCarta, userId);
   } 
+
+  intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){
+    return this.gameManager.intercambiarTodasCartas(partida, remitenteId, destinatarioId);
+  }
+
+  calcularPuntosJugador(partida: Game, userId: string){
+    return this.gameManager.calcularPuntosJugador(partida, userId);
+  }
+  
 }

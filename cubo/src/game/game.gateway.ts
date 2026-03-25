@@ -40,6 +40,15 @@ interface verCartaPayload{
   indexCarta: number,
 }
 
+interface intercambiarTodasPaylaod{
+  gameId : string,
+  destinatarioId: string,
+}
+
+interface calcularPuntosJugadorPayload{
+  gameId: string,
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -220,6 +229,50 @@ export class GameGateway {
 
 
   }
+
+  @SubscribeMessage('intercambiar-todas-cartas')
+  intercambiarTodasCartas(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: intercambiarTodasPaylaod,
+  ){
+    try{
+      const partida = this.gameService.getGameById(payload.gameId);
+      const remitenteId = this.getUserId(client);
+
+      this.gameService.intercambiarTodasCartas(partida, remitenteId,
+        payload.destinatarioId);
+      this.notificarTodosCambioCartas(partida,remitenteId, 
+        payload.destinatarioId);
+
+      } catch (error){
+        throw new WsException("Error inesperado");
+    }
+  }
+
+  @SubscribeMessage('calcular-puntos')
+  calcularPuntosJugador(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: calcularPuntosJugadorPayload,
+  ){
+    try{
+      const partida = this.gameService.getGameById(payload.gameId);
+      const userId = this.getUserId(client);
+      const puntos = this.gameService.calcularPuntosJugador(partida, userId);
+
+      this.server.to(client.id).emit('puntos-calculados',{
+        gameId: payload.gameId,
+        puntos: puntos,
+      });
+
+      return {
+        success: true,
+        gameId: payload.gameId,
+      }
+    } catch (error){
+      throw new WsException("Error inesperado");
+    } 
+  }
+    
 ////////////////////////////////////////////////////////////////////////////////
 //                              HABILIDADES DE CARTAS                         //
 ////////////////////////////////////////////////////////////////////////////////

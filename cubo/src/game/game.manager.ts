@@ -39,11 +39,12 @@ export class GameManager {
     }
 
     
-    private static crearCarta(carta: number, palo: PaloCarta, habilidad = 'ninguna'): Card {
+    private static crearCarta(carta: number, palo: PaloCarta, habilidad = 'ninguna', puntos: number): Card {
         return {
             carta,
             palo,
             habilidad,
+            puntos
         };
     }
 
@@ -58,12 +59,20 @@ export class GameManager {
         ];
         for (let tipo = 0; tipo < vtipo.length; tipo++) {
         for (let i = 1; i <= 13; i++) {
-            baraja.push(GameManager.crearCarta(i, vtipo[tipo]));
+            let puntos = 0;
+            if (i == 13 && (vtipo[tipo] == 'corazones' || vtipo[tipo] == 'rombos')){
+                puntos = 0;
+            } else if (i == 13 && (vtipo[tipo] == 'picas' || vtipo[tipo] == 'treboles')){
+                puntos = 20;
+            } else {
+                puntos = i;
+            }
+            baraja.push(GameManager.crearCarta(i, vtipo[tipo], 'ninguna', puntos));
         }
     }
 
     for (let i = 1; i <= 3; i++) {
-        baraja.push(GameManager.crearCarta(52 + i, 'jocker'));
+        baraja.push(GameManager.crearCarta(52 + i, 'jocker', 'ninguna', -1));
     }
     return baraja;
 }
@@ -258,7 +267,7 @@ private static mezclarArray<T>(array: T[]): T[] {
 
     verCarta(partida: Game, numCarta: number, userId: string) : Card{
 
-         const turno = partida.estadoGlobal.turn;
+        const turno = partida.estadoGlobal.turn;
         const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
         if(userId == turnUserId){
             const idEnPartida = partida.estadoGlobal.turnoJugadores.    
@@ -279,5 +288,29 @@ private static mezclarArray<T>(array: T[]): T[] {
         } else {
             throw new Error('No es el turno del jugador que intenta jugar');
         }
+    }
+
+    intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){
+
+        this.intercambiarCarta(partida, remitenteId, destinatarioId, 0, 0);
+        this.intercambiarCarta(partida, remitenteId, destinatarioId, 1, 1);
+        this.intercambiarCarta(partida, remitenteId, destinatarioId, 2, 2);
+        this.intercambiarCarta(partida, remitenteId, destinatarioId, 3, 3);
+    }    
+    
+    calcularPuntosJugador(partida: Game, userId: string) : number{
+        
+        const idEnPartida = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(userId);
+        if (idEnPartida == -1){
+            throw new Error('El usuario no está registrado en la \
+                    partida');
+        }
+            
+        const cartasJugador = partida.estadoGlobal.jugadores[idEnPartida]
+            .cartasMano;
+        const puntosJugador = cartasJugador.reduce((total, carta) => total + carta.puntos, 0);
+        return puntosJugador;
+        
     }
 }
