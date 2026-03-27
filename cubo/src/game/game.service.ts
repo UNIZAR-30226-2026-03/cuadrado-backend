@@ -61,5 +61,12 @@ export class GameService {
   calcularPuntosJugador(partida: Game, userId: string){
     return this.gameManager.calcularPuntosJugador(partida, userId);
   }
+
+  solicitarColocarCartaSobreOtra(idPartida : string, userId: string){
+    return this.gameManager.solicitarColocarCartaSobreOtra(idPartida, userId);
+  }
   
+  ponerCartaSobreotra(partida : Game , userId : string, numCarta :number){
+    return this.gameManager.ponerCartaSobreOtra(partida, userId, numCarta);
+  }
 }

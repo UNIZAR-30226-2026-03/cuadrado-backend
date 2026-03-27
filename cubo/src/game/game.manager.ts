@@ -18,6 +18,11 @@ export class GameManager {
     //representa las partidas activas por sala (solo puede haber 1)
     private readonly rooms = new Map<string, Room>();
 
+    //variables usadas para controlar la acción de colocar una carta sobre otra
+    //en el momento de descartar una carta
+    private reaccionCarta = new Map<string, boolean>();
+    private reaccionUserId = new Map <string, string>();
+
     getRoomById(roomId: string): Room {
         const sala = this.rooms.get(roomId);
 
@@ -156,6 +161,7 @@ private static mezclarArray<T>(array: T[]): T[] {
             estadoGlobal: estadoGlobal,
             updatedAt: new Date(),
         }
+        this.reaccionCarta.set(gameCode,true);
         this.games.set(gameCode, partida);
         return partida;
     }
@@ -164,7 +170,7 @@ private static mezclarArray<T>(array: T[]): T[] {
     robarCarta(partida : Game, userId :string) {
         //comprobar que sea el turno del jugador
         const turno = partida.estadoGlobal.turn;
-        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno];
         if(userId == turnUserId){
             const idEnPartida = partida.estadoGlobal.turnoJugadores.    
                                                         indexOf(userId);
@@ -179,9 +185,30 @@ private static mezclarArray<T>(array: T[]): T[] {
         }      
     }
 
+    descartarCarta(partida: Game , userId : string, cartaSobreOtra : boolean
+        , numCarta : number
+    ){
+        if(!cartaSobreOtra){
+            const turno = partida.estadoGlobal.turn;
+            const turnUserId = partida.estadoGlobal.turnoJugadores[turno];
+            if(userId != turnUserId){
+                throw new Error('No es el turno del jugador que intenta jugar');
+            }
+        } else {
+            //operativa de poner carta sobre otra, no hace falta comprobar el 
+            //turno del jugador
+            const idEnPartida = partida.estadoGlobal.turnoJugadores.indexOf(userId);
+            const carta = partida.estadoGlobal.jugadores[idEnPartida]
+                .cartasMano[numCarta];
+            partida.estadoGlobal.cartasDescartadas.push(carta);
+            partida.estadoGlobal.jugadores[idEnPartida]
+                        .cartasMano.splice(numCarta, 1);
+
+        }
+    }
     descartarCartaPendiente(partida: Game, userId : string) : Card{
         const turno = partida.estadoGlobal.turn;
-        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno];
         if(userId == turnUserId){
             const idEnPartida = partida.estadoGlobal.turnoJugadores.    
                                                         indexOf(userId);
@@ -313,4 +340,77 @@ private static mezclarArray<T>(array: T[]): T[] {
         return puntosJugador;
         
     }
+
+
+    //esta función la puede invocar cualquier jugador en cualquier momento de la
+    //partida después de que otro jugador descarte una carta
+    solicitarColocarCartaSobreOtra(idPartida: string, userId : string) : boolean {
+        const reaccionCarta = this.reaccionCarta.get(idPartida);
+        if(reaccionCarta == true){
+            this.reaccionCarta.set(idPartida,false);
+            this.reaccionUserId.set(idPartida,userId);
+            return true;
+        } else{
+            return false;
+        }
+    }
+
+    ponerCartaSobreOtra(partida: Game, userId : string, numCarta : number){
+        let accionCorrecta;
+        let numCartas;
+        
+        const idPartida = partida.gameId;
+        const reaccionUserId = this.reaccionUserId.get(idPartida);
+        if(userId == reaccionUserId){
+            const idEnPartida = partida.estadoGlobal.turnoJugadores
+                .indexOf(userId);
+            numCartas = partida.estadoGlobal.jugadores[idEnPartida]
+                            .cartasMano.length
+            if(numCarta < 0 || numCarta > numCartas-1){
+                throw new Error('La carta que se quiere jugar no \
+                    está disponible');
+            }
+
+            const carta = partida.estadoGlobal.jugadores[idEnPartida].
+                cartasMano[numCarta];
+            const ultimaCartaPendiente = partida.estadoGlobal.cartasDescartadas[
+                partida.estadoGlobal.cartasDescartadas.length -1];
+            
+            if(ultimaCartaPendiente != null){
+                
+                //gestionar la excepción de que los reyes tienen distinta 
+                //puntuación en función del palo pero siguen siendo el mismo
+                //número
+            
+                if(carta.carta == ultimaCartaPendiente.carta){
+                    //actividad normal, deja poner la carta encima de la otra
+                    //descartar carta
+                    this.descartarCarta(partida, userId, true, numCarta);
+                    numCartas = partida.estadoGlobal.jugadores[idEnPartida]
+                            .cartasMano.length
+                    accionCorrecta = true;
+                } else {
+                    //el jugador ha fallado a la hora de elegir la carta
+                    const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
+                    if(!cartaRobada){
+                        throw new Error("No quedan cartas para robar")
+                    }
+                    partida.estadoGlobal.jugadores[idEnPartida].cartasMano[
+                        partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length
+                    ] = cartaRobada;
+                    numCartas = partida.estadoGlobal.jugadores[idEnPartida]
+                            .cartasMano.length
+                    accionCorrecta = false;
+                }
+                return {accionCorrecta: accionCorrecta, numCartas: numCartas};
+            } else {
+                throw new Error('Ya no quedan cartas en el mazo para robar');
+            }        
+        } else {
+            throw new Error('El jugador no tiene permiso para realizar esta \
+                acción en este turno');
+        }
+    }
 }
+
+

@@ -49,6 +49,15 @@ interface calcularPuntosJugadorPayload{
   gameId: string,
 }
 
+interface solicitarCartaSobreOtraPayload{
+  gameId: string,
+}
+
+interface cartaSobreOtraPayload{
+  gameId : string,
+  numCarta :number,
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -64,7 +73,7 @@ export class GameGateway {
       private readonly roomsService : RoomsService,
   ) {}
 
-  private notificarTodosCartaRobada(partida : Game, ){
+  private notificarTodosCartaRobada(partida : Game ){
     this.server.to(partida.roomId).emit('carta-robada',{
       partidaId : partida.gameId,
       jugadorRobado: partida.estadoGlobal.turn,
@@ -92,6 +101,18 @@ export class GameGateway {
       partidaId : partida.gameId,
       remitente: idRemitente,
       destinatario: idDestinatario,
+    });
+  }
+
+  private notificarTodosAccionCartaSobreOtra(
+    idSala : string, 
+    numCartasMano : number,
+    idUsuario : string,
+  ) {
+    this.server.to(idSala).emit('AccionCartaSobreOtra',{
+      partidaId : idSala,
+      usuarioImplicado: idUsuario,
+      numCartasMano: numCartasMano,
     });
   }
 
@@ -189,6 +210,8 @@ export class GameGateway {
     }
   }
   
+  //TODO: aquí en intercambio de carta no se puede devolver la fornt el estado
+  //completo de la partida
   @SubscribeMessage('intercambiar-carta')
   intercambiarCarta(
     @ConnectedSocket() client: Socket,
@@ -272,7 +295,46 @@ export class GameGateway {
       throw new WsException("Error inesperado");
     } 
   }
-    
+
+  @SubscribeMessage('solicitarCartaSobreOtra')
+  solicitarCartaSobreOtra(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: solicitarCartaSobreOtraPayload,
+  ){  
+      const userId = this.getUserId(client);
+      const aceptado = this.gameService.solicitarColocarCartaSobreOtra(
+        payload.gameId,
+        userId
+      );
+      this.server.to(client.id).emit('ponerCartaSobreOtra',{
+        aceptada: aceptado,
+      });
+  }
+  
+  @SubscribeMessage('ponerCartaSobreOtra')
+  ponerCartaSobreOtra(
+    @ConnectedSocket() client : Socket,
+    @MessageBody() payload: cartaSobreOtraPayload,
+  ){
+    const userId = this.getUserId(client);
+    const partida = this.gameService.getGameById(payload.gameId);
+    const resultado = this.gameService.ponerCartaSobreotra(
+      partida,
+      userId,
+      payload.numCarta,
+    );
+    if(resultado.accionCorrecta){
+      //el jugador ha puesto una carta con el número correcto
+      this.server.to(client.id).emit('ponerOtraCartaSobreOtra?',{
+        gameId: payload.gameId,
+      });
+    } 
+    //notificar al resto de jugadores que el jugador en cuestión tiene una
+    //carta más o una menos
+    this.notificarTodosAccionCartaSobreOtra(partida.roomId, resultado.numCartas,
+      userId);
+  }
+ 
 ////////////////////////////////////////////////////////////////////////////////
 //                              HABILIDADES DE CARTAS                         //
 ////////////////////////////////////////////////////////////////////////////////
