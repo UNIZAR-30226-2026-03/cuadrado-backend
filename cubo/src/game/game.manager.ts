@@ -1,9 +1,8 @@
 import { GameState } from "./interfaces/game.interface";
 import { PlayerState } from "./interfaces/game.interface";
 import { Game} from "./interfaces/game.interface";
-import { RoomManager } from "src/rooms/room.manager";
 import { Card, PaloCarta } from "./interfaces/card.interface"
-import {Room} from '../rooms/interfaces/room.interface'
+import { Room } from "src/rooms/interfaces/room.interface";
 
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -176,6 +175,7 @@ private static mezclarArray<T>(array: T[]): T[] {
                                                         indexOf(userId);
             const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
             if(!cartaRobada){
+                //TODO: rebarajar, decir al front que se rebaraja y darle la carta robada
                 throw new Error("No quedan cartas para robar")
             }
             partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente
@@ -318,11 +318,27 @@ private static mezclarArray<T>(array: T[]): T[] {
     }
 
     intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){
+        const turno = partida.estadoGlobal.turn;
+        const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
+        if(remitenteId === turnUserId){
+            const idEnPartidaR = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(remitenteId);
+            const idEnPartidaD = partida.estadoGlobal.turnoJugadores.    
+                                                        indexOf(destinatarioId);
+            if (idEnPartidaD === -1){
+                throw new Error('El destinatario no está registrado en la \
+                    partida');
+            }
 
-        this.intercambiarCarta(partida, remitenteId, destinatarioId, 0, 0);
-        this.intercambiarCarta(partida, remitenteId, destinatarioId, 1, 1);
-        this.intercambiarCarta(partida, remitenteId, destinatarioId, 2, 2);
-        this.intercambiarCarta(partida, remitenteId, destinatarioId, 3, 3);
+            //intercambiar cartas. (... para shallow copy y no referencia)
+            const cartasRemitente = [...partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano];
+            partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano = [...partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano];
+            partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano = cartasRemitente;
+
+        } else {
+            throw new Error('No es el turno del jugador que intenta jugar');
+        }
+
     }    
     
     calcularPuntosJugador(partida: Game, userId: string) : number{
