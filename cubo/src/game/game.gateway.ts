@@ -13,7 +13,6 @@ import { Card } from './interfaces/card.interface';
 import { Room } from 'src/rooms/interfaces/room.interface';
 import { RoomsService } from 'src/rooms/rooms.service';
 import { RoomManager } from 'src/rooms/room.manager';
-import { use } from 'passport';
 
 interface robarCartaPayload {
   gameId: string;
@@ -122,21 +121,24 @@ export class GameGateway {
   iniciarPartida(
     @ConnectedSocket() client: Socket,
   ){
-    //comprobar que el usuario que solicita iniciar la partida sea el host
-    const userId = this.getUserId(client);
-    const sala = this.roomsService.getRoomByUserId(userId);
-    if(!sala){
-      throw new WsException('No hay ninguna sala registrada para el usuario \
-        que intenta iniciar partida');
-    }
-    if(sala.hostId == userId && sala.started == false){
-      const partida = this.gameService.inicioPartida(sala);
-      this.notificarTodosComienzoPartida(partida);
-       return{
-        success: true
+    try {
+      //comprobar que el usuario que solicita iniciar la partida sea el host
+      const userId = this.getUserId(client);
+      const sala = this.roomsService.getRoomByUserId(userId);
+      if(!sala){
+        throw new Error('No hay ninguna sala registrada para el usuario que intenta iniciar partida');
       }
-    } else{
+      if(sala.hostId == userId && sala.started == false){
+        const partida = this.gameService.inicioPartida(sala);
+        this.notificarTodosComienzoPartida(partida);
+        return{
+          success: true,
+        }
+      }
+
       throw new Error('Ha habido un error inesperado al iniciar la partida');
+    } catch (error) {
+      this.handleWsError(error);
     }
   }
 
@@ -149,8 +151,7 @@ export class GameGateway {
     try {
       const partida = this.gameService.getGameById(payload.gameId);
       if(!partida){
-        throw new WsException('No existe partida asociada con dicho \
-          Identificador');
+        throw new Error('No existe partida asociada con dicho identificador');
       }
       const userId = this.getUserId(client);
       this.gameService.robarCarta(partida, userId);
@@ -163,7 +164,7 @@ export class GameGateway {
         success: true,
       };
     } catch (error) {
-      throw new WsException(this.getErrorMessage(error));
+      this.handleWsError(error);
     }
   }
 
@@ -182,8 +183,8 @@ export class GameGateway {
         success: true,
         gameId: partida.gameId,
       }
-    } catch {
-      throw new WsException("Error inesperado");
+    } catch (error) {
+      this.handleWsError(error);
     }
   }
 
@@ -205,8 +206,8 @@ export class GameGateway {
         success: true,
         gameId: partida.gameId,
       }
-    } catch {
-      throw new WsException("Error inesperado");
+    } catch (error) {
+      this.handleWsError(error);
     }
   }
   
@@ -217,13 +218,22 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarCartaPayload,
   ){
-    const partida = this.gameService.getGameById(payload.gameId);
-    const remitenteId = this.getUserId(client);
-    this.gameService.intercambiarCarta(partida, remitenteId,
-      payload.destinatarioId, payload.numCartaRemitente, 
-      payload.numCartaDestinatario);
-    this.notificarTodosCambioCartas(partida,remitenteId, 
-      payload.destinatarioId);
+    try {
+      const partida = this.gameService.getGameById(payload.gameId);
+      const remitenteId = this.getUserId(client);
+      this.gameService.intercambiarCarta(partida, remitenteId,
+        payload.destinatarioId, payload.numCartaRemitente, 
+        payload.numCartaDestinatario);
+      this.notificarTodosCambioCartas(partida,remitenteId, 
+        payload.destinatarioId);
+
+      return {
+        success: true,
+        //aqui lo del todo...
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
 
   }
 
@@ -247,7 +257,7 @@ export class GameGateway {
         gameId: partida.gameId,
       };
     } catch (error) {
-      throw new WsException("Error inesperado");
+      this.handleWsError(error);
     }
 
 
@@ -267,8 +277,12 @@ export class GameGateway {
       this.notificarTodosCambioCartas(partida,remitenteId, 
         payload.destinatarioId);
 
+      return {
+        success: true,
+        //Todo: rellenar bien el payload
+      };
       } catch (error){
-        throw new WsException("Error inesperado");
+        this.handleWsError(error);
     }
   }
 
@@ -292,7 +306,7 @@ export class GameGateway {
         gameId: payload.gameId,
       }
     } catch (error){
-      throw new WsException("Error inesperado");
+      this.handleWsError(error);
     } 
   }
 
@@ -301,6 +315,7 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: solicitarCartaSobreOtraPayload,
   ){  
+    try {
       const userId = this.getUserId(client);
       const aceptado = this.gameService.solicitarColocarCartaSobreOtra(
         payload.gameId,
@@ -309,6 +324,15 @@ export class GameGateway {
       this.server.to(client.id).emit('ponerCartaSobreOtra',{
         aceptada: aceptado,
       });
+
+      return {
+        success: true,
+        gameId: payload.gameId,
+        //TODO: revisar el payload
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
   }
   
   @SubscribeMessage('ponerCartaSobreOtra')
@@ -316,23 +340,33 @@ export class GameGateway {
     @ConnectedSocket() client : Socket,
     @MessageBody() payload: cartaSobreOtraPayload,
   ){
-    const userId = this.getUserId(client);
-    const partida = this.gameService.getGameById(payload.gameId);
-    const resultado = this.gameService.ponerCartaSobreotra(
-      partida,
-      userId,
-      payload.numCarta,
-    );
-    if(resultado.accionCorrecta){
-      //el jugador ha puesto una carta con el número correcto
-      this.server.to(client.id).emit('ponerOtraCartaSobreOtra?',{
+    try {
+      const userId = this.getUserId(client);
+      const partida = this.gameService.getGameById(payload.gameId);
+      const resultado = this.gameService.ponerCartaSobreotra(
+        partida,
+        userId,
+        payload.numCarta,
+      );
+      if(resultado.accionCorrecta){
+        //el jugador ha puesto una carta con el número correcto
+        this.server.to(client.id).emit('ponerOtraCartaSobreOtra?',{
+          gameId: payload.gameId,
+        });
+      } 
+      //notificar al resto de jugadores que el jugador en cuestión tiene una
+      //carta más o una menos
+      this.notificarTodosAccionCartaSobreOtra(partida.roomId, resultado.numCartas,
+        userId);
+
+      return {
+        success: true,
         gameId: payload.gameId,
-      });
-    } 
-    //notificar al resto de jugadores que el jugador en cuestión tiene una
-    //carta más o una menos
-    this.notificarTodosAccionCartaSobreOtra(partida.roomId, resultado.numCartas,
-      userId);
+        //TODO: revisar el payload
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
   }
  
 ////////////////////////////////////////////////////////////////////////////////
@@ -354,7 +388,44 @@ export class GameGateway {
     return userId;
   }
 
+
+  //Se ha solicitado a Gemini un helper centralizado de error para los WebSockets
+  private handleWsError(error: unknown): never {
+    throw new WsException({
+      success: false,
+      error: {
+        message: this.getErrorMessage(error),
+      },
+    });
+  }
+
   private getErrorMessage(error: unknown): string {
+    if (error instanceof WsException) {
+      const wsError = error.getError();
+
+      if (typeof wsError === 'string') {
+        return wsError;
+      }
+
+      if (
+        typeof wsError === 'object' &&
+        wsError !== null &&
+        'message' in wsError
+      ) {
+        const message = (wsError as { message?: unknown }).message;
+
+        if (typeof message === 'string') {
+          return message;
+        }
+
+        if (Array.isArray(message)) {
+          return message.join(', ');
+        }
+      }
+
+      return 'Error inesperado';
+    }
+
     if (error instanceof Error) {
       return error.message;
     }

@@ -10,8 +10,8 @@ export class GameService {
   getGameById(gameId: string) : Game {
     return this.gameManager.getGameById(gameId);
   }
-  getRoomById(roomId: string) : Room {
-    return this.gameManager.getRoomById(roomId);
+  getGameByRoomId(roomId: string): Game {
+    return this.gameManager.getGameByRoomId(roomId);
   }
   //TODO: pasar room.players entero para hacer un mapa y facilitar las 
   // comprobaciones

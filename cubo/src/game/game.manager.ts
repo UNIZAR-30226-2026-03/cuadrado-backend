@@ -2,7 +2,6 @@ import { GameState } from "./interfaces/game.interface";
 import { PlayerState } from "./interfaces/game.interface";
 import { Game} from "./interfaces/game.interface";
 import { Card, PaloCarta } from "./interfaces/card.interface"
-import { Room } from "src/rooms/interfaces/room.interface";
 
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -14,23 +13,13 @@ export class GameManager {
 
     //representa el acceso a una sala mediante su identificador
     private readonly games = new Map<string, Game>();
-    //representa las partidas activas por sala (solo puede haber 1)
-    private readonly rooms = new Map<string, Room>();
+    //representa las partidas activas por sala (roomId -> gameId)
+    private readonly roomToGame = new Map<string, string>();
 
     //variables usadas para controlar la acción de colocar una carta sobre otra
     //en el momento de descartar una carta
     private reaccionCarta = new Map<string, boolean>();
     private reaccionUserId = new Map <string, string>();
-
-    getRoomById(roomId: string): Room {
-        const sala = this.rooms.get(roomId);
-
-        if (!sala) {
-            throw new Error('Partida no encontrada');
-         }
-
-        return sala;
-    }
 
     getGameById(gameId: string): Game {
         const partida = this.games.get(gameId);
@@ -40,6 +29,16 @@ export class GameManager {
          }
 
         return partida;
+    }
+
+    getGameByRoomId(roomId: string): Game {
+        const gameId = this.roomToGame.get(roomId);
+
+        if (!gameId) {
+            throw new Error('No hay partida activa para la sala');
+        }
+
+        return this.getGameById(gameId);
     }
 
     
@@ -131,6 +130,10 @@ private static mezclarArray<T>(array: T[]): T[] {
         codigoSala : string,
         idJugadores: string[],
         ) : Game {
+        if (this.roomToGame.has(codigoSala)) {
+            throw new Error('Ya existe una partida activa para la sala');
+        }
+
         const aux : Card[] = GameManager.rellenarBaraja();
         const baraja : Card[] = GameManager.mezclarArray(aux);
         const gameCode = this.generateUniqueRoomCode();
@@ -162,6 +165,7 @@ private static mezclarArray<T>(array: T[]): T[] {
         }
         this.reaccionCarta.set(gameCode,true);
         this.games.set(gameCode, partida);
+        this.roomToGame.set(codigoSala, gameCode);
         return partida;
     }
 
@@ -203,6 +207,7 @@ private static mezclarArray<T>(array: T[]): T[] {
             partida.estadoGlobal.cartasDescartadas.push(carta);
             partida.estadoGlobal.jugadores[idEnPartida]
                         .cartasMano.splice(numCarta, 1);
+            //this.reaccionCarta.set(partida.gameId,true);
 
         }
     }
@@ -220,6 +225,7 @@ private static mezclarArray<T>(array: T[]): T[] {
             partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
             partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente 
                 = undefined;
+            this.reaccionCarta.set(partida.gameId,true); //Reactivo la posibilidad de que otro jugador pueda colocar carta sobre otra
             return cartaPendiente; 
         } else {
             throw new Error('No es el turno del jugador que intenta jugar');
@@ -247,6 +253,7 @@ private static mezclarArray<T>(array: T[]): T[] {
             partida.estadoGlobal.jugadores[idEnPartida].cartasMano[numCarta]
                 = cartaPendiente;  
             partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;  
+            this.reaccionCarta.set(partida.gameId,true); //Reactivo la posibilidad de que otro jugador pueda colocar carta sobre otra
             return cartaDescartar;
         } else {
             throw new Error('No es el turno del jugador que intenta jugar');
