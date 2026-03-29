@@ -10,9 +10,6 @@ import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
-import { Room } from 'src/rooms/interfaces/room.interface';
-import { RoomsService } from 'src/rooms/rooms.service';
-import { RoomManager } from 'src/rooms/room.manager';
 
 interface robarCartaPayload {
   gameId: string;
@@ -21,10 +18,6 @@ interface robarCartaPayload {
 interface cartaPorPendientePayload{
   gameId: string;
   numCarta: number;
-}
-
-interface iniciarPartidaPayload {
-  sala : Room;
 }
 
 interface intercambiarCartaPayload{
@@ -67,10 +60,7 @@ export class GameGateway {
   @WebSocketServer()
   server: Server;
 
-  constructor(
-      private readonly gameService: GameService, 
-      private readonly roomsService : RoomsService,
-  ) {}
+  constructor(private readonly gameService: GameService) {}
 
   private notificarTodosCartaRobada(partida : Game ){
     this.server.to(partida.roomId).emit('game:carta-robada',{
@@ -122,21 +112,25 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
   ){
     try {
-      //comprobar que el usuario que solicita iniciar la partida sea el host
       const userId = this.getUserId(client);
-      const sala = this.roomsService.getRoomByUserId(userId);
-      if(!sala){
-        throw new Error('No hay ninguna sala registrada para el usuario que intenta iniciar partida');
-      }
-      if(sala.hostId == userId && sala.started == false){
-        const partida = this.gameService.inicioPartida(sala);
-        this.notificarTodosComienzoPartida(partida);
-        return{
-          success: true,
-        }
+      const { room } = this.gameService.validateStartContext(userId, client.id);
+
+      this.assertSocketInExpectedRoom(client, room.code);
+
+      if (room.hostId !== userId) {
+        throw new Error('Solo el host puede iniciar la partida');
       }
 
-      throw new Error('Ha habido un error inesperado al iniciar la partida');
+      if (room.started) {
+        throw new Error('La sala ya está iniciada');
+      }
+
+      const partida = this.gameService.inicioPartida(room);
+      this.notificarTodosComienzoPartida(partida);
+
+      return{
+        success: true,
+      }
     } catch (error) {
       this.handleWsError(error);
     }
@@ -149,11 +143,11 @@ export class GameGateway {
     @MessageBody() payload: robarCartaPayload,
   ) {
     try {
-      const partida = this.gameService.getGameById(payload.gameId);
-      if(!partida){
-        throw new Error('No existe partida asociada con dicho identificador');
-      }
-      const userId = this.getUserId(client);
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       this.gameService.robarCarta(partida, userId);
 
       this.notificarTodosCartaRobada(partida);
@@ -174,8 +168,11 @@ export class GameGateway {
     @MessageBody() payload: robarCartaPayload,
   ){
     try{
-      const partida = this.gameService.getGameById(payload.gameId);
-      const userId = this.getUserId(client);
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       const cartaPendiente = this.gameService.descartarPendiente(partida,userId);
       
       this.notificarTodosDescartarPendiente(partida,cartaPendiente);
@@ -194,8 +191,11 @@ export class GameGateway {
     @MessageBody() payload: cartaPorPendientePayload,
   ){
     try{
-      const partida = this.gameService.getGameById(payload.gameId);
-      const userId = this.getUserId(client);
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       const carta = this.gameService.cartaPorPendiente(
         partida,
         payload.numCarta,
@@ -219,8 +219,11 @@ export class GameGateway {
     @MessageBody() payload: intercambiarCartaPayload,
   ){
     try {
-      const partida = this.gameService.getGameById(payload.gameId);
-      const remitenteId = this.getUserId(client);
+      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       this.gameService.intercambiarCarta(partida, remitenteId,
         payload.destinatarioId, payload.numCartaRemitente, 
         payload.numCartaDestinatario);
@@ -243,8 +246,11 @@ export class GameGateway {
     @MessageBody() payload: verCartaPayload
   ) {
     try {
-      const partida = this.gameService.getGameById(payload.gameId);
-      const userId = this.getUserId(client);
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       const carta = this.gameService.verCarta(partida, payload.indexCarta, userId);
 
       this.server.to(client.id).emit('game:carta-revelada',{
@@ -269,8 +275,10 @@ export class GameGateway {
     @MessageBody() payload: intercambiarTodasPaylaod,
   ){
     try{
-      const partida = this.gameService.getGameById(payload.gameId);
-      const remitenteId = this.getUserId(client);
+      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
 
       this.gameService.intercambiarTodasCartas(partida, remitenteId,
         payload.destinatarioId);
@@ -292,8 +300,11 @@ export class GameGateway {
     @MessageBody() payload: calcularPuntosJugadorPayload,
   ){
     try{
-      const partida = this.gameService.getGameById(payload.gameId);
-      const userId = this.getUserId(client);
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       const puntos = this.gameService.calcularPuntosJugador(partida, userId);
 
       this.server.to(client.id).emit('game:puntos-calculados',{
@@ -316,7 +327,8 @@ export class GameGateway {
     @MessageBody() payload: solicitarCartaSobreOtraPayload,
   ){  
     try {
-      const userId = this.getUserId(client);
+      const { userId } = this.getValidatedGameContext(client, payload.gameId);
+
       const aceptado = this.gameService.solicitarColocarCartaSobreOtra(
         payload.gameId,
         userId
@@ -341,8 +353,11 @@ export class GameGateway {
     @MessageBody() payload: cartaSobreOtraPayload,
   ){
     try {
-      const userId = this.getUserId(client);
-      const partida = this.gameService.getGameById(payload.gameId);
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
       const resultado = this.gameService.ponerCartaSobreotra(
         partida,
         userId,
@@ -386,6 +401,28 @@ export class GameGateway {
     }
 
     return userId;
+  }
+
+  private getValidatedGameContext(client: Socket, gameId: string) {
+    const userId = this.getUserId(client);
+    const validation = this.gameService.validateGameContext(
+      gameId,
+      userId,
+      client.id,
+    );
+
+    this.assertSocketInExpectedRoom(client, validation.room.code);
+
+    return {
+      partida: validation.game,
+      userId,
+    };
+  }
+
+  private assertSocketInExpectedRoom(client: Socket, roomCode: string) {
+    if (!client.rooms.has(roomCode)) {
+      throw new Error('El socket no está unido a la sala esperada');
+    }
   }
 
 
