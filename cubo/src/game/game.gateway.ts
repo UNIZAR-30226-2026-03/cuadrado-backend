@@ -73,14 +73,14 @@ export class GameGateway {
   ) {}
 
   private notificarTodosCartaRobada(partida : Game ){
-    this.server.to(partida.roomId).emit('carta-robada',{
+    this.server.to(partida.roomId).emit('game:carta-robada',{
       partidaId : partida.gameId,
       jugadorRobado: partida.estadoGlobal.turn,
     });
   }
  
   private notificarTodosDescartarPendiente(partida : Game, carta: Card){
-    this.server.to(partida.roomId).emit('descartar-pendiente',{
+    this.server.to(partida.roomId).emit('game:descartar-pendiente',{
       partidaId : partida.gameId,
       carta: carta,
     });
@@ -88,7 +88,7 @@ export class GameGateway {
 
 
   private notificarTodosComienzoPartida(partida: Game){
-    this.server.to(partida.roomId).emit('inicio-partida',{
+    this.server.to(partida.roomId).emit('game:inicio-partida',{
       partidaId : partida.gameId,
     });
   }
@@ -96,7 +96,7 @@ export class GameGateway {
   private notificarTodosCambioCartas(partida: Game, idRemitente: string,
     idDestinatario: string
   ){
-     this.server.to(partida.roomId).emit('intercambio-cartas',{
+     this.server.to(partida.roomId).emit('game:intercambio-cartas',{
       partidaId : partida.gameId,
       remitente: idRemitente,
       destinatario: idDestinatario,
@@ -104,12 +104,12 @@ export class GameGateway {
   }
 
   private notificarTodosAccionCartaSobreOtra(
-    idSala : string, 
+    partida: Game,
     numCartasMano : number,
     idUsuario : string,
   ) {
-    this.server.to(idSala).emit('AccionCartaSobreOtra',{
-      partidaId : idSala,
+    this.server.to(partida.roomId).emit('game:accion-carta-sobre-otra',{
+      partidaId: partida.gameId,
       usuarioImplicado: idUsuario,
       numCartasMano: numCartasMano,
     });
@@ -117,7 +117,7 @@ export class GameGateway {
 
   //FIX: ahora se comprueba que el usuario que solicita iniciar la partida sea
   //el host de la misma.
-  @SubscribeMessage('iniciar-partida')
+  @SubscribeMessage('game:iniciar-partida')
   iniciarPartida(
     @ConnectedSocket() client: Socket,
   ){
@@ -213,7 +213,7 @@ export class GameGateway {
   
   //TODO: aquí en intercambio de carta no se puede devolver la fornt el estado
   //completo de la partida
-  @SubscribeMessage('intercambiar-carta')
+  @SubscribeMessage('game:intercambiar-carta')
   intercambiarCarta(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarCartaPayload,
@@ -247,7 +247,7 @@ export class GameGateway {
       const userId = this.getUserId(client);
       const carta = this.gameService.verCarta(partida, payload.indexCarta, userId);
 
-      this.server.to(client.id).emit('carta-revelada',{
+      this.server.to(client.id).emit('game:carta-revelada',{
         gameId: payload.gameId,
         carta: carta,
       });
@@ -263,7 +263,7 @@ export class GameGateway {
 
   }
 
-  @SubscribeMessage('intercambiar-todas-cartas')
+  @SubscribeMessage('game:intercambiar-todas-cartas')
   intercambiarTodasCartas(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarTodasPaylaod,
@@ -286,7 +286,7 @@ export class GameGateway {
     }
   }
 
-  @SubscribeMessage('calcular-puntos')
+  @SubscribeMessage('game:calcular-puntos')
   calcularPuntosJugador(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: calcularPuntosJugadorPayload,
@@ -296,7 +296,7 @@ export class GameGateway {
       const userId = this.getUserId(client);
       const puntos = this.gameService.calcularPuntosJugador(partida, userId);
 
-      this.server.to(client.id).emit('puntos-calculados',{
+      this.server.to(client.id).emit('game:puntos-calculados',{
         gameId: payload.gameId,
         puntos: puntos,
       });
@@ -310,7 +310,7 @@ export class GameGateway {
     } 
   }
 
-  @SubscribeMessage('solicitarCartaSobreOtra')
+  @SubscribeMessage('game:solicitar-carta-sobre-otra')
   solicitarCartaSobreOtra(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: solicitarCartaSobreOtraPayload,
@@ -321,7 +321,7 @@ export class GameGateway {
         payload.gameId,
         userId
       );
-      this.server.to(client.id).emit('ponerCartaSobreOtra',{
+      this.server.to(client.id).emit('game:poner-carta-sobre-otra',{
         aceptada: aceptado,
       });
 
@@ -335,7 +335,7 @@ export class GameGateway {
     }
   }
   
-  @SubscribeMessage('ponerCartaSobreOtra')
+  @SubscribeMessage('game:poner-carta-sobre-otra')
   ponerCartaSobreOtra(
     @ConnectedSocket() client : Socket,
     @MessageBody() payload: cartaSobreOtraPayload,
@@ -350,13 +350,13 @@ export class GameGateway {
       );
       if(resultado.accionCorrecta){
         //el jugador ha puesto una carta con el número correcto
-        this.server.to(client.id).emit('ponerOtraCartaSobreOtra?',{
+        this.server.to(client.id).emit('game:poner-otra-carta-sobre-otra',{
           gameId: payload.gameId,
         });
       } 
       //notificar al resto de jugadores que el jugador en cuestión tiene una
       //carta más o una menos
-      this.notificarTodosAccionCartaSobreOtra(partida.roomId, resultado.numCartas,
+      this.notificarTodosAccionCartaSobreOtra(partida, resultado.numCartas,
         userId);
 
       return {
