@@ -378,6 +378,29 @@ private static mezclarArray<T>(array: T[]): T[] {
         }
     }
 
+    private finalizarPartida(partida: Game, ganadorId: string): void {
+        // TODO: notificar a gateway/service con el resultado final y limpieza global.
+        partida.estado = 'terminado';
+        partida.updatedAt = new Date();
+        this.reaccionCarta.delete(partida.gameId);
+        this.reaccionUserId.delete(partida.gameId);
+    }
+
+    private validarFinPartidaPorSinCartas(partida: Game, userId: string): boolean {
+        const idEnPartida = partida.estadoGlobal.turnoJugadores.indexOf(userId);
+        if (idEnPartida === -1) {
+            return false;
+        }
+
+        const numCartas = partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+        if (numCartas === 0) {
+            this.finalizarPartida(partida, userId);
+            return true;
+        }
+
+        return false;
+    }
+
     ponerCartaSobreOtra(partida: Game, userId : string, numCarta : number){
         let accionCorrecta;
         let numCartas;
@@ -411,6 +434,7 @@ private static mezclarArray<T>(array: T[]): T[] {
                     this.descartarCarta(partida, userId, true, numCarta);
                     numCartas = partida.estadoGlobal.jugadores[idEnPartida]
                             .cartasMano.length
+                    this.validarFinPartidaPorSinCartas(partida, userId);
                     accionCorrecta = true;
                 } else {
                     //el jugador ha fallado a la hora de elegir la carta
