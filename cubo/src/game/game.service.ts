@@ -59,6 +59,7 @@ export class GameService {
     socketId: string,
   ): ValidatedGameContext {
     const game = this.gameManager.getGameById(gameId);
+    this.gameManager.resolverTimeoutTurno(game);
 
     if (game.estado !== 'activo') {
       throw new Error('La partida no está activa');

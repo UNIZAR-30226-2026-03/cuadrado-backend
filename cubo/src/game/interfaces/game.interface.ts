@@ -9,8 +9,12 @@ export interface Game {
     updatedAt : Date;
 }
 
+export type TurnPhase = 'WAIT_DRAW' | 'WAIT_DECISION' | 'WAIT_SKILL';
+
 export interface GameState {
     turn : number;
+    phase: TurnPhase;
+    turnDeadlineAt: number;
     cartasVigentes : Card[];
     cartasDescartadas : Card[];
     habilidadesActivadas : number[];
