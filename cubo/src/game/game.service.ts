@@ -101,8 +101,6 @@ export class GameService {
     };
   }
 
-  //TODO: pasar room.players entero para hacer un mapa y facilitar las 
-  // comprobaciones
   inicioPartida(room: Room): Game {
     const playerUserIds = Array.from(room.players.values()).map(
       (player) => player.userId,
@@ -138,8 +136,12 @@ export class GameService {
       );
   }
 
-  verCarta(partida: Game, numCarta: number, userId: string){
-    return this.gameManager.verCarta(partida, numCarta, userId);
+  verCarta(partida: Game, solicitanteId : string, indexCarta: number, playerId?: string
+    ,indexCartaPlayer?: number
+  ){
+    return this.gameManager.verCarta(partida, solicitanteId, indexCarta, playerId
+      ,indexCartaPlayer
+    );
   } 
 
   intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){

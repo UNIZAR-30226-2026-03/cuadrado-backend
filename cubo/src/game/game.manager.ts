@@ -6,6 +6,17 @@ import { Card, PaloCarta } from "./interfaces/card.interface"
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
+interface PermisoVerCarta {
+  jugadorId: string;
+  tipo: 'propia' | 'propia-y-rival';
+  turno: number;
+}
+
+export interface ResultadoVerCarta {
+  cartaPropia: Card;
+  cartaRival?: Card;
+}
+
 export class GameManager {
 ////////////////////////////////////////////////////////////////////////////////
 //                           ATRIBUTOS                                        //
@@ -20,6 +31,9 @@ export class GameManager {
     //en el momento de descartar una carta
     private reaccionCarta = new Map<string, boolean>();
     private reaccionUserId = new Map <string, string>();
+
+    //control de los requerimientos para ver carta
+    private readonly permisosVerCarta = new Map<string, PermisoVerCarta>();
 
     getGameById(gameId: string): Game {
         const partida = this.games.get(gameId);
@@ -78,9 +92,9 @@ export class GameManager {
         baraja.push(GameManager.crearCarta(52 + i, 'jocker', 'ninguna', -1));
     }
     return baraja;
-}
+    }
 
-private static mezclarArray<T>(array: T[]): T[] {
+    private static mezclarArray<T>(array: T[]): T[] {
   const resultado = [...array];
 
   for (let i = resultado.length - 1; i > 0; i--) {
@@ -89,9 +103,9 @@ private static mezclarArray<T>(array: T[]): T[] {
   }
 
   return resultado;
-}
+    }  
 
- private generateRoomCode(): string {
+    private generateRoomCode(): string {
     let code = '';
 
     for (let index = 0; index < ROOM_CODE_LENGTH; index += 1) {
@@ -100,9 +114,9 @@ private static mezclarArray<T>(array: T[]): T[] {
     }
 
     return code;
-  }
+    }
 
-  private generateUniqueRoomCode(): string {
+    private generateUniqueRoomCode(): string {
     let candidate = this.generateRoomCode();
 
     while (this.games.has(candidate)) {
@@ -110,9 +124,9 @@ private static mezclarArray<T>(array: T[]): T[] {
     }
 
     return candidate;
-  }
+    }
 
-  private static asignarCartasJugadores(baraja : Card[],
+    private static asignarCartasJugadores(baraja : Card[],
                 estadoJugadores : PlayerState[], numJugadores : number){
     for(let cartas=0; cartas <= 3 ; cartas++){
         for(let jugador = 0; jugador <= numJugadores-1; jugador++){
@@ -123,8 +137,67 @@ private static mezclarArray<T>(array: T[]): T[] {
             estadoJugadores[jugador].cartasMano.push(carta);
         }
     }
-  }
-    
+    }
+
+    private limpiarPermisoVerCarta(gameId: string) {
+        this.permisosVerCarta.delete(gameId);
+    }
+
+    private registrarPermisoVerCarta(
+        partida: Game,
+        jugadorId: string,
+        cartaDescartada: Card,
+    ) {
+        this.limpiarPermisoVerCarta(partida.gameId);
+
+        if (cartaDescartada.carta === 10) {
+            this.permisosVerCarta.set(partida.gameId, {
+            jugadorId,
+            tipo: 'propia',
+            turno: partida.estadoGlobal.turn,
+            });
+            return;
+        }
+
+        if (cartaDescartada.carta === 11) {
+            this.permisosVerCarta.set(partida.gameId, {
+            jugadorId,
+            tipo: 'propia-y-rival',
+            turno: partida.estadoGlobal.turn,
+            });
+        }
+    }
+
+    private obtenerIndiceJugador(partida: Game, userId: string): number {
+        const idEnPartida = partida.estadoGlobal.turnoJugadores.indexOf(userId);
+
+        if (idEnPartida === -1) {
+            throw new Error('El usuario no está registrado en la partida');
+        }
+
+        return idEnPartida;
+    }
+
+    private obtenerCartaDeJugador(
+        partida: Game,
+        userId: string,
+        numCarta: number,
+    ): Card {
+        const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+        const cartas = partida.estadoGlobal.jugadores[idEnPartida].cartasMano;
+
+        if (numCarta < 0 || numCarta >= cartas.length) {
+            throw new Error('La carta seleccionada no existe');
+        }
+
+        const carta = cartas[numCarta];
+        if (!carta) {
+            throw new Error('La carta seleccionada no existe');
+        }
+
+        return carta;
+    }
+
     inicioPartida(
         numJugadores : number, 
         codigoSala : string,
@@ -169,19 +242,27 @@ private static mezclarArray<T>(array: T[]): T[] {
         return partida;
     }
 
-    //FIX de seguridad
     robarCarta(partida : Game, userId :string) {
         //comprobar que sea el turno del jugador
         const turno = partida.estadoGlobal.turn;
         const turnUserId = partida.estadoGlobal.turnoJugadores[turno];
         if(userId == turnUserId){
-            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
-                                                        indexOf(userId);
+            const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+            const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+            if (estadoJugador.cartaPendiente) {
+                throw new Error('El jugador ya tiene una carta pendiente de \
+                    resolver');
+            }
+
+            this.limpiarPermisoVerCarta(partida.gameId);
+
             const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
+
             if(!cartaRobada){
-                //TODO: rebarajar, decir al front que se rebaraja y darle la carta robada
                 throw new Error("No quedan cartas para robar")
             }
+
             partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente
                 = cartaRobada;
         } else {
@@ -191,14 +272,13 @@ private static mezclarArray<T>(array: T[]): T[] {
 
     descartarCarta(partida: Game , userId : string, cartaSobreOtra : boolean
         , numCarta : number
-    ){
+    ) {
         if(!cartaSobreOtra){
             const turno = partida.estadoGlobal.turn;
             const turnUserId = partida.estadoGlobal.turnoJugadores[turno];
             if(userId != turnUserId){
                 throw new Error('No es el turno del jugador que intenta jugar');
             }
-        } else {
             //operativa de poner carta sobre otra, no hace falta comprobar el 
             //turno del jugador
             const idEnPartida = partida.estadoGlobal.turnoJugadores.indexOf(userId);
@@ -208,56 +288,71 @@ private static mezclarArray<T>(array: T[]): T[] {
             partida.estadoGlobal.jugadores[idEnPartida]
                         .cartasMano.splice(numCarta, 1);
             //this.reaccionCarta.set(partida.gameId,true);
-
-        }
+        }    
     }
+
+
     descartarCartaPendiente(partida: Game, userId : string) : Card{
         const turno = partida.estadoGlobal.turn;
         const turnUserId = partida.estadoGlobal.turnoJugadores[turno];
-        if(userId == turnUserId){
-            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
-                                                        indexOf(userId);
-            const cartaPendiente = partida.estadoGlobal.jugadores[idEnPartida]
-                                                            .cartaPendiente;
-            if(!cartaPendiente){
-                throw new Error('No hay carta pendiente');
-            }
-            partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
-            partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente 
-                = undefined;
-            this.reaccionCarta.set(partida.gameId,true); //Reactivo la posibilidad de que otro jugador pueda colocar carta sobre otra
-            return cartaPendiente; 
-        } else {
+
+        if(userId !== turnUserId){
             throw new Error('No es el turno del jugador que intenta jugar');
-        }     
+        }
+        
+        const idEnPartida = this.obtenerIndiceJugador(partida,userId);
+        const cartaPendiente = partida.estadoGlobal.jugadores[idEnPartida]
+                                                            .cartaPendiente;
+        if(!cartaPendiente){
+            throw new Error('No hay carta pendiente');
+        }
+
+        partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
+        
+        partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente 
+                = undefined;
+        
+        this.registrarPermisoVerCarta(partida, userId, cartaPendiente);
+        
+        //Reactivo la posibilidad de que otro jugador pueda colocar carta sobre otra
+        this.reaccionCarta.set(partida.gameId,true); 
+        
+        
+        return cartaPendiente; 
+  
     }
 
     descartarCartaPorPendiente(partida: Game, numCarta: number, userId: string)
     : Card{
         const turno = partida.estadoGlobal.turn;
         const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
-        if(userId == turnUserId){
-            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
+        if(userId !== turnUserId){
+            throw new Error('No es el turno del jugador que intenta jugar');
+        }
+        
+        const idEnPartida = partida.estadoGlobal.turnoJugadores.    
                                                         indexOf(userId);
-            const cartaPendiente = partida.estadoGlobal.jugadores[idEnPartida]
+        const cartaPendiente = partida.estadoGlobal.jugadores[idEnPartida]
                                                             .cartaPendiente;
-            if(!cartaPendiente){
-                throw new Error('No hay carta pendiente');
-            }
-            const cartaDescartar = partida.estadoGlobal.jugadores[idEnPartida]
+        if(!cartaPendiente){
+            throw new Error('No hay carta pendiente');
+        }
+        
+        const cartaDescartar = partida.estadoGlobal.jugadores[idEnPartida]
                                                         .cartasMano[numCarta];
-            if(!cartaDescartar){
-                throw new Error('No tienes esa carta en la mano');
-            }
+        if(!cartaDescartar){
+            throw new Error('No tienes esa carta en la mano');
+        }
             partida.estadoGlobal.cartasDescartadas.push(cartaDescartar);
             partida.estadoGlobal.jugadores[idEnPartida].cartasMano[numCarta]
                 = cartaPendiente;  
             partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;  
-            this.reaccionCarta.set(partida.gameId,true); //Reactivo la posibilidad de que otro jugador pueda colocar carta sobre otra
+            
+            this.limpiarPermisoVerCarta(partida.gameId);
+
+            //Reactivo la posibilidad de que otro jugador pueda colocar carta sobre otra
+            this.reaccionCarta.set(partida.gameId,true); 
             return cartaDescartar;
-        } else {
-            throw new Error('No es el turno del jugador que intenta jugar');
-        }
     }
 
     intercambiarCarta(partida: Game, remitenteId:string, destinatarioId:string,
@@ -299,29 +394,70 @@ private static mezclarArray<T>(array: T[]): T[] {
     
     }
 
-    verCarta(partida: Game, numCarta: number, userId: string) : Card{
-
+    verCarta(
+        partida: Game,
+        solicitanteId : string,
+        indexCartaPropia: number,
+        rivalId?: string,
+        indexCartaRival?: number,
+    ) : ResultadoVerCarta{
         const turno = partida.estadoGlobal.turn;
         const turnUserId = partida.estadoGlobal.turnoJugadores[turno]
-        if(userId == turnUserId){
-            const idEnPartida = partida.estadoGlobal.turnoJugadores.    
-                                                        indexOf(userId);
-            if (idEnPartida == -1){
-                throw new Error('El usuario no está registrado en la \
-                    partida');
-            }
-            const cartaAVer = partida.estadoGlobal.jugadores[idEnPartida]
-            .cartasMano[numCarta];
 
-            if(!cartaAVer){
-                throw new Error('No tienes en la mano la carta seleccionada');
-            }
-           
-            return cartaAVer;
-
-        } else {
+        if(solicitanteId !== turnUserId){
             throw new Error('No es el turno del jugador que intenta jugar');
         }
+        
+        const permiso = this.permisosVerCarta.get(partida.gameId);
+        if (!permiso || permiso.jugadorId !== solicitanteId || 
+                permiso.turno !== turno) {
+            throw new Error('No tienes permiso para usar verCarta en este \
+                 momento');
+        }
+
+        const quiereVerRival = rivalId != null || indexCartaRival != null;
+
+        if (permiso.tipo === 'propia') {
+            if (quiereVerRival) {
+                throw new Error('La carta 10 solo permite ver una carta propia');
+            }
+
+            const cartaPropia = this.obtenerCartaDeJugador(
+                partida,
+                solicitanteId,
+                indexCartaPropia,);
+
+            this.limpiarPermisoVerCarta(partida.gameId);
+            return { cartaPropia };
+        }
+
+         if (rivalId == null || indexCartaRival == null) {
+            throw new Error('La carta 11 requiere indicar una carta propia y otra rival');
+        }
+
+        if (rivalId === solicitanteId) {
+            throw new Error('La segunda carta debe pertenecer a un rival');
+        }
+
+        const cartaPropia = this.obtenerCartaDeJugador(
+            partida,
+            solicitanteId,
+            indexCartaPropia,
+        );
+
+        const cartaRival = this.obtenerCartaDeJugador(
+            partida,
+            rivalId,
+            indexCartaRival,
+        );
+
+        this.limpiarPermisoVerCarta(partida.gameId);
+
+        return {
+            cartaPropia,
+            cartaRival,
+        };
+     
     }
 
     intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){
@@ -384,6 +520,8 @@ private static mezclarArray<T>(array: T[]): T[] {
         partida.updatedAt = new Date();
         this.reaccionCarta.delete(partida.gameId);
         this.reaccionUserId.delete(partida.gameId);
+        this.permisosVerCarta.delete(partida.gameId);
+
     }
 
     private validarFinPartidaPorSinCartas(partida: Game, userId: string): boolean {
@@ -433,7 +571,7 @@ private static mezclarArray<T>(array: T[]): T[] {
                     //descartar carta
                     this.descartarCarta(partida, userId, true, numCarta);
                     numCartas = partida.estadoGlobal.jugadores[idEnPartida]
-                            .cartasMano.length
+                        .cartasMano.length
                     this.validarFinPartidaPorSinCartas(partida, userId);
                     accionCorrecta = true;
                 } else {
@@ -458,6 +596,10 @@ private static mezclarArray<T>(array: T[]): T[] {
                 acción en este turno');
         }
     }
+
+
+
+
 }
 
 

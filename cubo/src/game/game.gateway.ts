@@ -30,6 +30,9 @@ interface intercambiarCartaPayload{
 interface verCartaPayload{
   gameId: string,
   indexCarta: number,
+  //atributos que envía en caso de que quieras ver la carta de otro jugador
+  playerId? : string,
+  indexCartaPlayer? : number,
 }
 
 interface intercambiarTodasPaylaod{
@@ -251,11 +254,18 @@ export class GameGateway {
         payload.gameId,
       );
 
-      const carta = this.gameService.verCarta(partida, payload.indexCarta, userId);
+      const resultado = this.gameService.verCarta(
+      partida,
+      userId,
+      payload.indexCarta,
+      payload.playerId,
+      payload.indexCartaPlayer,
+    );
 
       this.server.to(client.id).emit('game:carta-revelada',{
         gameId: payload.gameId,
-        carta: carta,
+        carta: resultado.cartaPropia,
+        cartaJugadorContrario: resultado.cartaRival,
       });
 
       return {
