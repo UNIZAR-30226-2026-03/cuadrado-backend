@@ -1,4 +1,10 @@
-import { GameState, PlayerState, Game, TurnPhase } from './interfaces/game.interface';
+import {
+  GameState,
+  PlayerState,
+  Game,
+  TurnPhase,
+  FinPartidaMotivo,
+} from './interfaces/game.interface';
 import { Card, PaloCarta } from './interfaces/card.interface';
 
 const ROOM_CODE_LENGTH = 6;
@@ -15,6 +21,25 @@ export interface ResultadoVerCarta {
   cartaPropia: Card;
   cartaRival?: Card;
 }
+
+export interface ReshuffleInfo {
+  huboRebarajado: boolean;
+  cantidadCartasMazo: number;
+}
+
+export interface ResultadoRobarCarta {
+  cartaRobada: Card;
+  reshuffle: ReshuffleInfo;
+}
+
+export interface ResultadoPonerCartaSobreOtra {
+  accionCorrecta: boolean;
+  numCartas: number;
+  reshuffle: ReshuffleInfo;
+}
+
+export const SIN_CARTAS_ERROR_MESSAGE =
+  'No quedan cartas suficientes para continuar la partida';
 
 type AccionTurno =
   | 'DRAW'
@@ -236,6 +261,39 @@ export class GameManager {
     return resultado;
   }
 
+  private intentarRebarajarDescartes(partida: Game): ReshuffleInfo {
+    if (partida.estadoGlobal.cartasVigentes.length > 0) {
+      return {
+        huboRebarajado: false,
+        cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
+      };
+    }
+
+    if (partida.estadoGlobal.cartasDescartadas.length <= 1) {
+      this.finalizarPartida(partida, 'sinCartasMazo');
+      throw new Error(SIN_CARTAS_ERROR_MESSAGE);
+    }
+
+    const cartaSuperior = partida.estadoGlobal.cartasDescartadas.pop();
+    if (!cartaSuperior) {
+      this.finalizarPartida(partida, 'sinCartasMazo');
+      throw new Error(SIN_CARTAS_ERROR_MESSAGE);
+    }
+
+    const nuevasCartasMazo = GameManager.mezclarArray(
+      partida.estadoGlobal.cartasDescartadas,
+    );
+
+    partida.estadoGlobal.cartasVigentes = nuevasCartasMazo;
+    partida.estadoGlobal.cartasDescartadas = [cartaSuperior];
+    partida.updatedAt = new Date();
+
+    return {
+      huboRebarajado: true,
+      cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
+    };
+  }
+
   private generateRoomCode(): string {
     let code = '';
 
@@ -339,7 +397,7 @@ export class GameManager {
     return partida;
   }
 
-  robarCarta(partida: Game, userId: string) {
+  robarCarta(partida: Game, userId: string): ResultadoRobarCarta {
     this.validarAccionTurno(partida, userId, 'DRAW');
 
     const idEnPartida = this.obtenerIndiceJugador(partida, userId);
@@ -351,14 +409,22 @@ export class GameManager {
 
     this.limpiarPermisoVerCarta(partida.gameId);
 
+    const reshuffleInfo = this.intentarRebarajarDescartes(partida);
+
     const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
     if (!cartaRobada) {
-      // TODO: hacer reshuffle cuando no queden cartas en el mazo.
-      throw new Error('No quedan cartas para robar');
+      throw new Error(SIN_CARTAS_ERROR_MESSAGE);
     }
 
     estadoJugador.cartaPendiente = cartaRobada;
     this.cambiarFase(partida, 'WAIT_DECISION');
+
+    reshuffleInfo.cantidadCartasMazo = partida.estadoGlobal.cartasVigentes.length;
+
+    return {
+      cartaRobada,
+      reshuffle: reshuffleInfo,
+    };
   }
 
   descartarCarta(
@@ -585,9 +651,33 @@ export class GameManager {
     return userBloqueado === userId;
   }
 
-  private finalizarPartida(partida: Game, ganadorId: string): void {
+  private calcularGanador(partida: Game): string {
+    const jugadores = partida.estadoGlobal.turnoJugadores;
+
+    if (jugadores.length === 0) {
+      throw new Error('No hay jugadores en la partida para calcular ganador');
+    }
+
+    let ganadorId = jugadores[0];
+    let menorPuntaje = this.calcularPuntosJugador(partida, ganadorId);
+
+    for (let i = 1; i < jugadores.length; i++) {
+      const candidatoId = jugadores[i];
+      const puntaje = this.calcularPuntosJugador(partida, candidatoId);
+
+      if (puntaje < menorPuntaje) {
+        menorPuntaje = puntaje;
+        ganadorId = candidatoId;
+      }
+    }
+
+    return ganadorId;
+  }
+
+  private finalizarPartida(partida: Game, motivo: FinPartidaMotivo): void {
     // TODO: notificar a gateway/service con el resultado final y limpieza global.
-    void ganadorId;
+    partida.ganadorId = this.calcularGanador(partida);
+    partida.finPartidaMotivo = motivo;
     partida.estado = 'terminado';
     partida.updatedAt = new Date();
     this.reaccionCarta.delete(partida.gameId);
@@ -603,16 +693,24 @@ export class GameManager {
 
     const numCartas = partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
     if (numCartas === 0) {
-      this.finalizarPartida(partida, userId);
+      this.finalizarPartida(partida, 'unJugadorSinCartas');
       return true;
     }
 
     return false;
   }
 
-  ponerCartaSobreOtra(partida: Game, userId: string, numCarta: number) {
+  ponerCartaSobreOtra(
+    partida: Game,
+    userId: string,
+    numCarta: number,
+  ): ResultadoPonerCartaSobreOtra {
     let accionCorrecta: boolean;
     let numCartas: number;
+    let reshuffle: ReshuffleInfo = {
+      huboRebarajado: false,
+      cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
+    };
 
     const idPartida = partida.gameId;
     const reaccionCartaAbierta = this.reaccionCarta.get(idPartida);
@@ -640,8 +738,8 @@ export class GameManager {
     }
 
                 //gestionar la excepción de que los reyes tienen distinta 
-                //puntuación en función del palo pero siguen siendo el mismo
-                //número
+                //puntuación en función del palo pero siguen siendo el mismo numero 
+                //No entiendo esto mucho la verdad... que tienen que ver los puntos??
     if (carta.carta === ultimaCartaPendiente.carta) {
         //actividad normal, deja poner la carta encima de la otra
         //descartar carta
@@ -652,10 +750,11 @@ export class GameManager {
       accionCorrecta = true;
     } else {
         //el jugador ha fallado a la hora de elegir la carta
+      reshuffle = this.intentarRebarajarDescartes(partida);
+
       const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
       if (!cartaRobada) {
-        // TODO: hacer reshuffle cuando no queden cartas en el mazo.
-        throw new Error('No quedan cartas para robar');
+        throw new Error(SIN_CARTAS_ERROR_MESSAGE);
       }
 
       partida.estadoGlobal.jugadores[idEnPartida].cartasMano.push(cartaRobada);
@@ -665,6 +764,12 @@ export class GameManager {
       accionCorrecta = false;
     }
 
-    return { accionCorrecta, numCartas };
+    reshuffle.cantidadCartasMazo = partida.estadoGlobal.cartasVigentes.length;
+
+    return {
+      accionCorrecta,
+      numCartas,
+      reshuffle,
+    };
   }
 }

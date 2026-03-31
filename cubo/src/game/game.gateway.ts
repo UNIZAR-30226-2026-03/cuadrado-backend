@@ -8,8 +8,9 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
-import { Game } from './interfaces/game.interface';
+import { FinPartidaMotivo, Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { SIN_CARTAS_ERROR_MESSAGE } from './game.manager';
 
 interface robarCartaPayload {
   gameId: string;
@@ -108,6 +109,31 @@ export class GameGateway {
     });
   }
 
+  private notificarTodosRebarajado(partida: Game) {
+    this.server.to(partida.roomId).emit('game:mazo-rebarajado', {
+      gameId: partida.gameId,
+      cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
+      cantidadCartasDescartadas: partida.estadoGlobal.cartasDescartadas.length,
+    });
+  }
+
+  private notificarTodosPartidaFinalizada(
+    partida: Game,
+    motivo: FinPartidaMotivo,
+  ) {
+    this.server.to(partida.roomId).emit('game:partida-finalizada', {
+      gameId: partida.gameId,
+      motivo,
+      ganadorId: partida.ganadorId,
+      cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
+      cantidadCartasDescartadas: partida.estadoGlobal.cartasDescartadas.length,
+    });
+  }
+
+  private esErrorSinCartas(error: unknown): boolean {
+    return error instanceof Error && error.message === SIN_CARTAS_ERROR_MESSAGE;
+  }
+
   //FIX: ahora se comprueba que el usuario que solicita iniciar la partida sea
   //el host de la misma.
   @SubscribeMessage('game:iniciar-partida')
@@ -145,13 +171,20 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: robarCartaPayload,
   ) {
+    let partida: Game | undefined;
+
     try {
-      const { partida, userId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
 
-      this.gameService.robarCarta(partida, userId);
+      const resultado = this.gameService.robarCarta(partida, contexto.userId);
+
+      if (resultado.reshuffle.huboRebarajado) {
+        this.notificarTodosRebarajado(partida);
+      }
 
       this.notificarTodosCartaRobada(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
@@ -161,6 +194,9 @@ export class GameGateway {
         success: true,
       };
     } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.notificarTodosPartidaFinalizada(partida, 'sinCartasMazo');
+      }
       this.handleWsError(error);
     }
   }
@@ -362,17 +398,32 @@ export class GameGateway {
     @ConnectedSocket() client : Socket,
     @MessageBody() payload: cartaSobreOtraPayload,
   ){
+    let partida: Game | undefined;
+
     try {
-      const { partida, userId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
 
       const resultado = this.gameService.ponerCartaSobreotra(
         partida,
-        userId,
+        contexto.userId,
         payload.numCarta,
       );
+
+      if (partida.estado === 'terminado') {
+        this.notificarTodosPartidaFinalizada(
+          partida,
+          partida.finPartidaMotivo ?? 'unJugadorSinCartas',
+        );
+      }
+
+      if (resultado.reshuffle.huboRebarajado) {
+        this.notificarTodosRebarajado(partida);
+      }
+
       if(resultado.accionCorrecta){
         //el jugador ha puesto una carta con el número correcto
         this.server.to(client.id).emit('game:poner-otra-carta-sobre-otra',{
@@ -382,7 +433,7 @@ export class GameGateway {
       //notificar al resto de jugadores que el jugador en cuestión tiene una
       //carta más o una menos
       this.notificarTodosAccionCartaSobreOtra(partida, resultado.numCartas,
-        userId);
+        contexto.userId);
 
       return {
         success: true,
@@ -390,6 +441,9 @@ export class GameGateway {
         //TODO: revisar el payload
       };
     } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.notificarTodosPartidaFinalizada(partida, 'sinCartasMazo');
+      }
       this.handleWsError(error);
     }
   }

@@ -1,10 +1,17 @@
 import {Room} from '../../rooms/interfaces/room.interface'
 import {Card} from './card.interface'
 
+export type FinPartidaMotivo =
+    | 'sinCartasMazo'
+    | 'unJugadorSinCartas'
+    | 'cubo';
+
 export interface Game {
     gameId : string;
     roomId : string;
     estado: 'activo' | 'parado' | 'terminado';
+    ganadorId?: string;
+    finPartidaMotivo?: FinPartidaMotivo;
     estadoGlobal: GameState;
     updatedAt : Date;
 }

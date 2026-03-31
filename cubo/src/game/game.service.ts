@@ -1,5 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { GameManager } from './game.manager';
+import {
+  GameManager,
+  ResultadoPonerCartaSobreOtra,
+  ResultadoRobarCarta,
+} from './game.manager';
 import { Game } from './interfaces/game.interface';
 import { Room } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
@@ -114,7 +118,7 @@ export class GameService {
     );
   }
 
-  robarCarta(partida: Game, userId: string) {
+  robarCarta(partida: Game, userId: string): ResultadoRobarCarta {
     return this.gameManager.robarCarta(partida,userId);
   }
 
@@ -157,7 +161,11 @@ export class GameService {
     return this.gameManager.solicitarColocarCartaSobreOtra(idPartida, userId);
   }
   
-  ponerCartaSobreotra(partida : Game , userId : string, numCarta :number){
+  ponerCartaSobreotra(
+    partida : Game,
+    userId : string,
+    numCarta :number,
+  ): ResultadoPonerCartaSobreOtra {
     return this.gameManager.ponerCartaSobreOtra(partida, userId, numCarta);
   }
 }
