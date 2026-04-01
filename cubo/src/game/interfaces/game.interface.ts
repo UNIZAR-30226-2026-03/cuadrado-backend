@@ -22,6 +22,9 @@ export interface GameState {
     turn : number;
     phase: TurnPhase;
     turnDeadlineAt: number;
+    cuboActivado: boolean;
+    cuboSolicitanteId: string | null;
+    cuboTurnosRestantes?: number;
     cartasVigentes : Card[];
     cartasDescartadas : Card[];
     habilidadesActivadas : number[];

@@ -54,6 +54,10 @@ interface cartaSobreOtraPayload{
   numCarta :number,
 }
 
+interface cuboPayload {
+  gameId: string;
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -64,7 +68,9 @@ export class GameGateway {
   @WebSocketServer()
   server: Server;
 
-  constructor(private readonly gameService: GameService) {}
+  constructor(
+    private readonly gameService: GameService,
+  ) {}
 
   private notificarTodosCartaRobada(partida : Game ){
     this.server.to(partida.roomId).emit('game:carta-robada',{
@@ -121,13 +127,42 @@ export class GameGateway {
     partida: Game,
     motivo: FinPartidaMotivo,
   ) {
+    const cartasJugadores = partida.estadoGlobal.turnoJugadores.map(
+      (jugadorId, index) => {
+        const cartas = partida.estadoGlobal.jugadores[index].cartasMano;
+        return {
+          jugadorId,
+          valoresCartas: cartas.map((carta) => carta.carta),
+        };
+      },
+    );
+
     this.server.to(partida.roomId).emit('game:partida-finalizada', {
       gameId: partida.gameId,
       motivo,
       ganadorId: partida.ganadorId,
-      cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
-      cantidadCartasDescartadas: partida.estadoGlobal.cartasDescartadas.length,
+      cartasJugadores,
     });
+  }
+
+  private finalizarPartidaYSincronizarSala(
+    partida: Game,
+    fallbackMotivo?: FinPartidaMotivo,
+  ): boolean {
+    if (partida.estado !== 'terminado') {
+      return false;
+    }
+
+    const motivo = partida.finPartidaMotivo ?? fallbackMotivo ?? 'unJugadorSinCartas';
+    this.notificarTodosPartidaFinalizada(partida, motivo);
+
+    const roomState = this.gameService.resetRoomAfterGameAndGetState(partida.roomId);
+    //Aviso para que todos los fronts esten actualizados y sepan que ha terminado
+    if (roomState) {
+      this.server.to(partida.roomId).emit('room:update', roomState);
+    }
+
+    return true;
   }
 
   private esErrorSinCartas(error: unknown): boolean {
@@ -195,7 +230,7 @@ export class GameGateway {
       };
     } catch (error) {
       if (this.esErrorSinCartas(error) && partida) {
-        this.notificarTodosPartidaFinalizada(partida, 'sinCartasMazo');
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
       }
       this.handleWsError(error);
     }
@@ -213,6 +248,8 @@ export class GameGateway {
       );
 
       const cartaPendiente = this.gameService.descartarPendiente(partida,userId);
+
+      this.finalizarPartidaYSincronizarSala(partida);
       
       this.notificarTodosDescartarPendiente(partida,cartaPendiente);
       return {
@@ -240,6 +277,9 @@ export class GameGateway {
         payload.numCarta,
         userId,                                            
       );
+
+      this.finalizarPartidaYSincronizarSala(partida);
+
       this.notificarTodosDescartarPendiente(partida, carta);
       return {
         success: true,
@@ -297,6 +337,8 @@ export class GameGateway {
       payload.playerId,
       payload.indexCartaPlayer,
     );
+
+      this.finalizarPartidaYSincronizarSala(partida);
 
       this.server.to(client.id).emit('game:carta-revelada',{
         gameId: payload.gameId,
@@ -413,12 +455,7 @@ export class GameGateway {
         payload.numCarta,
       );
 
-      if (partida.estado === 'terminado') {
-        this.notificarTodosPartidaFinalizada(
-          partida,
-          partida.finPartidaMotivo ?? 'unJugadorSinCartas',
-        );
-      }
+      this.finalizarPartidaYSincronizarSala(partida);
 
       if (resultado.reshuffle.huboRebarajado) {
         this.notificarTodosRebarajado(partida);
@@ -442,8 +479,39 @@ export class GameGateway {
       };
     } catch (error) {
       if (this.esErrorSinCartas(error) && partida) {
-        this.notificarTodosPartidaFinalizada(partida, 'sinCartasMazo');
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
       }
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:cubo')
+  cubo(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: cuboPayload,
+  ) {
+    try {
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      const resultado = this.gameService.solicitarCubo(partida, userId);
+
+      if (resultado.activado) {
+        this.server.to(partida.roomId).emit('game:cubo-activado', {
+          gameId: partida.gameId,
+          solicitanteId: userId,
+          turnosRestantes: partida.estadoGlobal.cuboTurnosRestantes,
+        });
+      }
+
+      return {
+        success: true,
+        gameId: partida.gameId,
+        cuboActivado: resultado.activado,
+      };
+    } catch (error) {
       this.handleWsError(error);
     }
   }

@@ -229,6 +229,17 @@ export class RoomManager {
 
   }
 
+  resetRoomAfterGame(roomCode: string): Room | null {
+    const room = this.getRoomByCode(roomCode);
+
+    if (!room) {
+      return null;
+    }
+
+    room.started = false;
+    return room;
+  }
+
   getRoomState(roomCode: string): RoomState | null {
     const room = this.getRoomByCode(roomCode);
 

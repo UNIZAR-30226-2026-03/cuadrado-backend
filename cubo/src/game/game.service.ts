@@ -8,6 +8,7 @@ import { Game } from './interfaces/game.interface';
 import { Room } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
 import { RoomsService } from '../rooms/rooms.service';
+import { RoomState } from '../rooms/interfaces/room.interface';
 
 export interface ValidatedGameContext {
   game: Game;
@@ -155,6 +156,19 @@ export class GameService {
 
   calcularPuntosJugador(partida: Game, userId: string){
     return this.gameManager.calcularPuntosJugador(partida, userId);
+  }
+
+  solicitarCubo(partida: Game, userId: string) {
+    return this.gameManager.solicitarCubo(partida, userId);
+  }
+
+  resetRoomAfterGame(roomCode: string) {
+    return this.roomsService.resetRoomAfterGame(roomCode);
+  }
+
+  resetRoomAfterGameAndGetState(roomCode: string): RoomState | null {
+    this.roomsService.resetRoomAfterGame(roomCode);
+    return this.roomsService.getRoomState(roomCode);
   }
 
   solicitarColocarCartaSobreOtra(idPartida : string, userId: string){

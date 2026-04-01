@@ -114,6 +114,25 @@ export class GameManager {
     partida.estadoGlobal.turn = (partida.estadoGlobal.turn + 1) % totalJugadores;
     this.limpiarPermisoVerCarta(partida.gameId);
     this.cambiarFase(partida, 'WAIT_DRAW');
+    this.actualizarCuboTrasAvanceTurno(partida);
+  }
+
+  private actualizarCuboTrasAvanceTurno(partida: Game) {
+    if (!partida.estadoGlobal.cuboActivado) {
+      return;
+    }
+
+    const turnosRestantes = partida.estadoGlobal.cuboTurnosRestantes;
+    if (turnosRestantes == null) {
+      return;
+    }
+
+    const restantes = turnosRestantes - 1;
+    partida.estadoGlobal.cuboTurnosRestantes = restantes;
+
+    if (restantes <= 0) {
+      this.finalizarPartida(partida, 'cubo');
+    }
   }
 
   private validarAccionTurno(partida: Game, userId: string, accion: AccionTurno) {
@@ -376,6 +395,9 @@ export class GameManager {
       turn: 0,
       phase: 'WAIT_DRAW',
       turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + 8000, // se le da un tiempo extra en el primer turno
+      cuboActivado: false,
+      cuboTurnosRestantes: undefined,
+      cuboSolicitanteId: null,
       cartasVigentes: baraja,
       cartasDescartadas: [],
       habilidadesActivadas: [],
@@ -625,6 +647,26 @@ export class GameManager {
     return cartasJugador.reduce((total, carta) => total + carta.puntos, 0);
   }
 
+  solicitarCubo(partida: Game, userId: string): { activado: boolean } {
+    this.obtenerIndiceJugador(partida, userId);
+
+    if (partida.estado !== 'activo') {
+      throw new Error('La partida no está activa');
+    }
+
+    if (partida.estadoGlobal.cuboActivado) {
+      return { activado: false };
+    }
+
+    const totalJugadores = partida.estadoGlobal.turnoJugadores.length;
+    partida.estadoGlobal.cuboActivado = true;
+    partida.estadoGlobal.cuboSolicitanteId = userId;
+    partida.estadoGlobal.cuboTurnosRestantes = totalJugadores + 1;
+    partida.updatedAt = new Date();
+
+    return { activado: true };
+  }
+
   // esta función la puede invocar cualquier jugador en cualquier fase
   solicitarColocarCartaSobreOtra(idPartida: string, userId: string): boolean {
     const partida = this.games.get(idPartida);
@@ -678,8 +720,12 @@ export class GameManager {
     // TODO: notificar a gateway/service con el resultado final y limpieza global.
     partida.ganadorId = this.calcularGanador(partida);
     partida.finPartidaMotivo = motivo;
+    partida.estadoGlobal.cuboActivado = false;
+    partida.estadoGlobal.cuboSolicitanteId = null;
+    partida.estadoGlobal.cuboTurnosRestantes = undefined;
     partida.estado = 'terminado';
     partida.updatedAt = new Date();
+    this.roomToGame.delete(partida.roomId);
     this.reaccionCarta.delete(partida.gameId);
     this.reaccionUserId.delete(partida.gameId);
     this.permisosVerCarta.delete(partida.gameId);
