@@ -753,32 +753,32 @@ export class GameManager {
     return userBloqueado === userId;
   }
 
-  private calcularGanador(partida: Game): string {
+  /**
+   * Calcula el ranking completo de todos los jugadores ordenados por puntuación
+   * @returns Array de objetos {userId, puntaje} ordenados de menor a mayor puntaje
+   */
+  private calcularRanking(partida: Game): Array<{userId: string; puntaje: number}> {
     const jugadores = partida.estadoGlobal.turnoJugadores;
 
     if (jugadores.length === 0) {
-      throw new Error('No hay jugadores en la partida para calcular ganador');
+      throw new Error('No hay jugadores en la partida para calcular ranking');
     }
 
-    let ganadorId = jugadores[0];
-    let menorPuntaje = this.calcularPuntosJugador(partida, ganadorId);
+    // Crear array con userId y puntaje
+    const ranking = jugadores.map(userId => ({
+      userId,
+      puntaje: this.calcularPuntosJugador(partida, userId),
+    }));
 
-    for (let i = 1; i < jugadores.length; i++) {
-      const candidatoId = jugadores[i];
-      const puntaje = this.calcularPuntosJugador(partida, candidatoId);
+    // Ordenar por puntaje (menor puntaje = mejor posición)
+    ranking.sort((a, b) => a.puntaje - b.puntaje);
 
-      if (puntaje < menorPuntaje) {
-        menorPuntaje = puntaje;
-        ganadorId = candidatoId;
-      }
-    }
-
-    return ganadorId;
+    return ranking;
   }
 
   private finalizarPartida(partida: Game, motivo: FinPartidaMotivo): void {
     // TODO: notificar a gateway/service con el resultado final y limpieza global.
-    partida.ganadorId = this.calcularGanador(partida);
+    partida.ranking = this.calcularRanking(partida);
     partida.finPartidaMotivo = motivo;
     partida.estadoGlobal.cuboActivado = false;
     partida.estadoGlobal.cuboSolicitanteId = null;
@@ -934,5 +934,144 @@ export class GameManager {
     this.limpiarPermisoHabilidad(partida.gameId);
 
     return true;
+  }
+
+  // ----------------------------------------------------------
+  // CÁLCULO DE RECOMPENSAS (ELO Y CUBITOS)
+  // ----------------------------------------------------------
+
+
+  /**
+   * Calcula el multiplicador de escala según el tamaño de la sala
+   * @param totalJugadores Número de jugadores en la partida
+   * @returns M (0.5 para 2-3 jugadores, 0.8 para 4-5, 1.0 para 6+)
+   */
+  private calcularMultiplicadorSala(totalJugadores: number): number {
+    if (totalJugadores <= 3) return 0.5;
+    if (totalJugadores <= 5) return 0.8;
+    return 1.0;
+  }
+
+  /**
+   * Calcula el cambio de ELO para un jugador según su posición final
+   * Fórmula: B = (M × 30) × (1 - (2 × (i - 1)) / (N - 1))
+   * Si B > 0: puntos = B
+   * Si B ≤ 0: puntos = B × 0.6 (amortiguación de pérdida)
+   * 
+   * @param posicion Posición final del jugador (1 para ganador, N para último)
+   * @param totalJugadores Número total de jugadores
+   * @returns Cambio de ELO (positivo o negativo)
+   */
+  private eloChangeByPosition(posicion: number, totalJugadores: number): number {
+    const M = this.calcularMultiplicadorSala(totalJugadores);
+    const maxElo = M * 30;
+
+    // Fórmula bruta: B = (M × 30) × (1 - (2 × (i - 1)) / (N - 1))
+    const B = maxElo * (1 - (2 * (posicion - 1)) / (totalJugadores - 1));
+
+    // Aplicar amortiguación si es pérdida
+    const eloChange = B > 0 ? B : B * 0.6;
+
+    return Math.round(eloChange);
+  }
+
+  /**
+   * Calcula los cubitos ganados según la posición final
+   * Usa la misma lógica que ELO pero con base de puntos diferente
+   * 
+   * @param posicion Posición final del jugador (1 para ganador, N para último)
+   * @param totalJugadores Número total de jugadores
+   * @param baseCubitos Cantidad base de cubitos (default 100)
+   * @returns Cubitos ganados/perdidos
+   */
+  private cubitosEarnedByPosition(
+    eloChange: number,
+    baseCubitos: number = 30,
+    multiplicadorElo: number = 3,
+  ): number {
+    // Cubitos = base mínima + (cambio de ELO × multiplicador)
+    // Esto asegura: siempre ganan cubitos, pero proporcional al desempeño
+    const cubitos = baseCubitos + (eloChange * multiplicadorElo);
+    // Garantizar mínimo de `baseCubitos` (nunca negativo)
+    return Math.max(baseCubitos, Math.round(cubitos));
+  }
+
+  /**
+   * Aplica penalización adicional si el jugador activó cubo pero no ganó
+   * La penalización reduce tanto ELO como cubitos en un 30%
+   * 
+   * @param eloChange ELO a ganar/perder
+   * @param cubitos Cubitos a ganar/perder
+   * @param cuboSolicitanteId ID del jugador que solicitó cubo
+   * @param ganadorId ID del jugador ganador (posición 1)
+   * @returns Objeto con eloChange y cubitos ajustados
+   */
+  private aplicarPenalizacionCubo(
+    eloChange: number,
+    cubitos: number,
+    cuboSolicitanteId: string | null,
+    ganadorId: string,
+  ): { eloChange: number; cubitos: number } {
+    // Si no hay cubo activo o el solicitante fue el ganador, sin penalización
+    if (!cuboSolicitanteId || cuboSolicitanteId === ganadorId) {
+      return { eloChange, cubitos };
+    }
+
+    // Penalización: reducir 30% si fue cubo y no ganó
+    const penalizacion = 0.7; // Quedarse con 70% = reducción del 30%
+    return {
+      eloChange: Math.round(eloChange * penalizacion),
+      cubitos: Math.round(cubitos * penalizacion),
+    };
+  }
+
+  /**
+   * Calcula las recompensas completas (ELO y cubitos) para todos los jugadores
+   * Usa el ranking ya calculado en la partida
+   * 
+   * @param partida Partida finalizada (debe tener ranking ya calculado)
+   * @returns Array de {userId, posicion, eloChange, cubitosChange} con recompensas calculadas
+   */
+  calcularRecompensas(partida: Game): Array<{
+    userId: string;
+    posicion: number;
+    eloChange: number;
+    cubitosChange: number;
+  }> {
+    // Usar el ranking ya calculado en finalizarPartida
+    const ranking = partida.ranking;
+    if (!ranking || ranking.length === 0) {
+      throw new Error('No hay ranking calculado para la partida');
+    }
+
+    const totalJugadores = ranking.length;
+    const ganadorId = ranking[0].userId;
+    const cuboSolicitanteId = partida.estadoGlobal.cuboSolicitanteId;
+
+    const recompensas = ranking.map((jugador, index) => {
+      const posicion = index + 1; // 1-based position
+      let eloChange = this.eloChangeByPosition(posicion, totalJugadores);
+      // Cubitos basados en el cambio de ELO (proporcional)
+      let cubitosChange = this.cubitosEarnedByPosition(eloChange);
+
+      // Aplicar penalización por cubo si corresponde
+      const penalizado = this.aplicarPenalizacionCubo(
+        eloChange,
+        cubitosChange,
+        cuboSolicitanteId,
+        ganadorId,
+      );
+      eloChange = penalizado.eloChange;
+      cubitosChange = penalizado.cubitos;
+
+      return {
+        userId: jugador.userId,
+        posicion,
+        eloChange,
+        cubitosChange,
+      };
+    });
+
+    return recompensas;
   }
 }

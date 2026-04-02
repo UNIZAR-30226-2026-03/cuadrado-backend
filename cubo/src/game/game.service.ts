@@ -9,6 +9,7 @@ import { Room } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomState } from '../rooms/interfaces/room.interface';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface ValidatedGameContext {
   game: Game;
@@ -26,6 +27,7 @@ export class GameService {
   constructor(
     @Inject(GameManager) private readonly gameManager: GameManager,
     private readonly roomsService: RoomsService,
+    private readonly prisma: PrismaService,
   ) {}
   
   getGameById(gameId: string) : Game {
@@ -190,4 +192,27 @@ export class GameService {
   ): ResultadoPonerCartaSobreOtra {
     return this.gameManager.ponerCartaSobreOtra(partida, userId, numCarta);
   }
+
+  calcularRecompensas(partida: Game) {
+    return this.gameManager.calcularRecompensas(partida);
+  }
+
+  async aplicarRecompensas(
+    recompensas: Array<{ userId: string; eloChange: number; cubitosChange: number }>,
+  ): Promise<void> {
+    for (const recompensa of recompensas) {
+      await this.prisma.user.update({
+        where: { username: recompensa.userId },
+        data: {
+          eloRating: {
+            increment: recompensa.eloChange,
+          },
+          cubitos: {
+            increment: recompensa.cubitosChange,
+          },
+        },
+      });
+    }
+  }
+
 }

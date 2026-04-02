@@ -157,11 +157,19 @@ export class GameGateway {
       },
     );
 
+    // Calcular recompensas (ELO y cubitos) para cada jugador
+    const recompensas = this.gameService.calcularRecompensas(partida);
+
+    // Aplica recompensas en background (sin esperar)
+    this.gameService.aplicarRecompensas(recompensas);
+
     this.server.to(partida.roomId).emit('game:partida-finalizada', {
       gameId: partida.gameId,
       motivo,
-      ganadorId: partida.ganadorId,
+      ranking: partida.ranking,
+      ganadorId: partida.ranking?.[0]?.userId, // El primer elemento es el ganador (posición 1)
       cartasJugadores,
+      recompensas,
     });
   }
 
