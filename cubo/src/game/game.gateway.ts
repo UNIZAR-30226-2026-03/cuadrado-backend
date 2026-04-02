@@ -41,6 +41,16 @@ interface intercambiarTodasPaylaod{
   destinatarioId: string,
 }
 
+interface hacerRobarCartaPayload{
+  gameId: string,
+  adversarioId : string,
+}
+
+interface protegerCartaPayload{
+  gameId: string,
+  numCarta : number,
+}
+
 interface calcularPuntosJugadorPayload{
   gameId: string,
 }
@@ -103,6 +113,16 @@ export class GameGateway {
     });
   }
 
+  private notificarTodosHacerRobarCarta(partida : Game, idRemitente: string,
+    idDestinatario: string
+  ){
+     this.server.to(partida.roomId).emit('game:se-ha-hecho-robar-carta',{
+      partidaId : partida.gameId,
+      remitente: idRemitente,
+      destinatario: idDestinatario,
+    });
+  }
+  
   private notificarTodosAccionCartaSobreOtra(
     partida: Game,
     numCartasMano : number,
@@ -290,8 +310,6 @@ export class GameGateway {
     }
   }
   
-  //TODO: aquí en intercambio de carta no se puede devolver la fornt el estado
-  //completo de la partida
   @SubscribeMessage('game:intercambiar-carta')
   intercambiarCarta(
     @ConnectedSocket() client: Socket,
@@ -376,6 +394,55 @@ export class GameGateway {
       return {
         success: true,
         //Todo: rellenar bien el payload
+      };
+      } catch (error){
+        this.handleWsError(error);
+    }
+  }
+
+
+   @SubscribeMessage('game:hacer-robar-carta')
+  hacerRoarCarta(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: hacerRobarCartaPayload,
+  ){
+    try{
+      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      this.gameService.hacerRobarCarta(partida, remitenteId,
+        payload.adversarioId);
+      
+      this.notificarTodosHacerRobarCarta(partida,remitenteId, 
+        payload.adversarioId);
+
+      return {
+        success: true,
+        //Todo: rellenar bien el payload
+      };
+      } catch (error){
+        this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:hacer-robar-carta')
+  protegerCarta(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: protegerCartaPayload,
+  ){
+    try{
+      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      this.gameService.protegerCarta(partida, remitenteId,
+        payload.numCarta);
+  
+      return {
+        success: true,
       };
       } catch (error){
         this.handleWsError(error);

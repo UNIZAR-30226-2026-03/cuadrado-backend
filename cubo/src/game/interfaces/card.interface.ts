@@ -11,4 +11,5 @@ export interface Card {
   // TODO: hay que cambiar la habilidad por el tipo cuando esté creado
   habilidad: string;
   puntos: number;
+  protegida: boolean;
 }

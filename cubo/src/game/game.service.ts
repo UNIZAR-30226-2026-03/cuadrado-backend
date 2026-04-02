@@ -154,6 +154,14 @@ export class GameService {
     return this.gameManager.intercambiarTodasCartas(partida, remitenteId, destinatarioId);
   }
 
+  hacerRobarCarta(partida: Game, userId : string, adversarioId : string){
+    return this.gameManager.hacerRobarCarta(partida,userId,adversarioId);
+  }
+
+  protegerCarta(partida : Game, userId: string, numCarta : number) {
+    this.gameManager.protegerCarta(partida,userId,numCarta);
+  }
+
   calcularPuntosJugador(partida: Game, userId: string){
     return this.gameManager.calcularPuntosJugador(partida, userId);
   }

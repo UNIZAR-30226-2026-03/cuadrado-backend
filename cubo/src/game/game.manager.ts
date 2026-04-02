@@ -11,11 +11,26 @@ const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const TURN_TIMEOUT_MS = 30_000;
 
-interface PermisoVerCarta {
+interface PermisoHabilidadBase {
   jugadorId: string;
-  tipo: 'propia' | 'propia-y-rival';
   turno: number;
 }
+
+export type TipoPermisoHabilidad =
+  | 'ver-carta-propia'
+  | 'ver-carta-propia-y-rival'
+  | 'intercambiar-carta'
+  | 'intercambiar-todas'
+  | 'hacer-robar-carta'
+  | 'proteger-carta';
+
+type PermisoHabilidad =
+  | (PermisoHabilidadBase & { tipo: 'ver-carta-propia' })
+  | (PermisoHabilidadBase & { tipo: 'ver-carta-propia-y-rival' })
+  | (PermisoHabilidadBase & { tipo: 'intercambiar-carta' })
+  | (PermisoHabilidadBase & { tipo: 'intercambiar-todas' })
+  | (PermisoHabilidadBase & { tipo: 'hacer-robar-carta' })
+  | (PermisoHabilidadBase & { tipo: 'proteger-carta' });
 
 export interface ResultadoVerCarta {
   cartaPropia: Card;
@@ -45,7 +60,8 @@ type AccionTurno =
   | 'DRAW'
   | 'RESOLVE_PENDING'
   | 'RESOLVE_SKILL'
-  | 'OWNER_TURN_ONLY';
+  | 'OWNER_TURN_ONLY'
+  | 'WAIT_SKILL';
 
 export class GameManager {
 ////////////////////////////////////////////////////////////////////////////////
@@ -62,8 +78,8 @@ export class GameManager {
   private reaccionCarta = new Map<string, boolean>();
   private reaccionUserId = new Map <string, string>();
 
-  //control de los requerimientos para ver carta
-  private readonly permisosVerCarta = new Map<string, PermisoVerCarta>();
+  // control de los requerimientos de habilidades pendientes por partida
+  private readonly permisosHabilidad = new Map<string, PermisoHabilidad>();
 
   getGameById(gameId: string): Game {
     const partida = this.games.get(gameId);
@@ -112,7 +128,7 @@ export class GameManager {
   private avanzarTurno(partida: Game) {
     const totalJugadores = partida.estadoGlobal.turnoJugadores.length;
     partida.estadoGlobal.turn = (partida.estadoGlobal.turn + 1) % totalJugadores;
-    this.limpiarPermisoVerCarta(partida.gameId);
+    this.limpiarPermisoHabilidad(partida.gameId);
     this.cambiarFase(partida, 'WAIT_DRAW');
     this.actualizarCuboTrasAvanceTurno(partida);
   }
@@ -165,35 +181,78 @@ export class GameManager {
     this.reaccionUserId.delete(partida.gameId);
   }
 
-  private limpiarPermisoVerCarta(gameId: string) {
-    this.permisosVerCarta.delete(gameId);
+  private limpiarPermisoHabilidad(gameId: string) {
+    this.permisosHabilidad.delete(gameId);
   }
 
-  private registrarPermisoVerCarta(
+  private registrarPermisoHabilidad(
+    partida: Game,
+    permiso: PermisoHabilidad,
+  ) {
+    this.limpiarPermisoHabilidad(partida.gameId);
+    this.permisosHabilidad.set(partida.gameId, permiso);
+  }
+
+  private obtenerPermisoHabilidadActiva(
+    partida: Game,
+    jugadorId: string,
+    tiposPermitidos?: TipoPermisoHabilidad[],
+  ): PermisoHabilidad {
+    const permiso = this.permisosHabilidad.get(partida.gameId);
+    const turno = partida.estadoGlobal.turn;
+
+    if (!permiso || permiso.jugadorId !== jugadorId || permiso.turno !== turno) {
+      throw new Error('No tienes permiso para usar esta habilidad en este momento');
+    }
+
+    if (tiposPermitidos && !tiposPermitidos.includes(permiso.tipo)) {
+      throw new Error('La habilidad pendiente no permite esta accion');
+    }
+
+    return permiso;
+  }
+
+  private registrarPermisoHabilidadPorCartaDescartada(
     partida: Game,
     jugadorId: string,
     cartaDescartada: Card,
   ): boolean {
-    this.limpiarPermisoVerCarta(partida.gameId);
+    this.limpiarPermisoHabilidad(partida.gameId);
 
     if (cartaDescartada.carta === 10) {
-      this.permisosVerCarta.set(partida.gameId, {
+      this.registrarPermisoHabilidad(partida, {
         jugadorId,
-        tipo: 'propia',
+        tipo: 'ver-carta-propia',
         turno: partida.estadoGlobal.turn,
       });
       return true;
     }
 
     if (cartaDescartada.carta === 11) {
-      this.permisosVerCarta.set(partida.gameId, {
+      this.registrarPermisoHabilidad(partida, {
         jugadorId,
-        tipo: 'propia-y-rival',
+        tipo: 'ver-carta-propia-y-rival',
         turno: partida.estadoGlobal.turn,
       });
       return true;
     }
 
+    if(cartaDescartada.carta === 2) {
+        this.registrarPermisoHabilidad(partida,{
+            jugadorId,
+            tipo: 'hacer-robar-carta',
+            turno: partida.estadoGlobal.turn,
+        });
+        return true;
+    }
+
+    if(cartaDescartada.carta === 3) {
+        this.registrarPermisoHabilidad(partida, {
+            jugadorId,
+            tipo: 'proteger-carta',
+            turno: partida.estadoGlobal.turn,
+        });
+    }
     return false;
   }
 
@@ -219,7 +278,7 @@ export class GameManager {
 
     if (partida.estadoGlobal.phase === 'WAIT_SKILL') {
       // timeout cuando habilidad obligatoria: se pierde la accion y se pasa turno
-      this.limpiarPermisoVerCarta(partida.gameId);
+      this.limpiarPermisoHabilidad(partida.gameId);
     }
 
     this.avanzarTurno(partida);
@@ -231,12 +290,14 @@ export class GameManager {
     palo: PaloCarta,
     habilidad = 'ninguna',
     puntos: number,
+    protegida : false,
   ): Card {
     return {
       carta,
       palo,
       habilidad,
       puntos,
+      protegida,
     };
   }
 
@@ -258,12 +319,12 @@ export class GameManager {
         } else {
           puntos = i;
         }
-        baraja.push(GameManager.crearCarta(i, vtipo[tipo], 'ninguna', puntos));
+        baraja.push(GameManager.crearCarta(i, vtipo[tipo], 'ninguna', puntos, false));
       }
     }
 
     for (let i = 1; i <= 3; i++) {
-      baraja.push(GameManager.crearCarta(52 + i, 'jocker', 'ninguna', -1));
+      baraja.push(GameManager.crearCarta(52 + i, 'jocker', 'ninguna', -1, false));
     }
 
     return baraja;
@@ -429,7 +490,7 @@ export class GameManager {
       throw new Error('El jugador ya tiene una carta pendiente de resolver');
     }
 
-    this.limpiarPermisoVerCarta(partida.gameId);
+    this.limpiarPermisoHabilidad(partida.gameId);
 
     const reshuffleInfo = this.intentarRebarajarDescartes(partida);
 
@@ -487,7 +548,7 @@ export class GameManager {
     partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
     partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;
 
-    const requiereResolverHabilidad = this.registrarPermisoVerCarta(
+    const requiereResolverHabilidad = this.registrarPermisoHabilidadPorCartaDescartada(
       partida,
       userId,
       cartaPendiente,
@@ -527,7 +588,7 @@ export class GameManager {
     cartas[numCarta] = cartaPendiente;
     partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;
 
-    this.limpiarPermisoVerCarta(partida.gameId); //Porque aqui???
+    this.limpiarPermisoHabilidad(partida.gameId); //Porque aqui???
 
 
     this.abrirVentanaReaccionGlobal(partida);
@@ -575,15 +636,14 @@ export class GameManager {
   ): ResultadoVerCarta {
     this.validarAccionTurno(partida, solicitanteId, 'RESOLVE_SKILL');
 
-    const turno = partida.estadoGlobal.turn;
-    const permiso = this.permisosVerCarta.get(partida.gameId);
-    if (!permiso || permiso.jugadorId !== solicitanteId || permiso.turno !== turno) {
-      throw new Error('No tienes permiso para usar verCarta en este momento');
-    }
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, solicitanteId, [
+      'ver-carta-propia',
+      'ver-carta-propia-y-rival',
+    ]);
 
     const quiereVerRival = rivalId != null || indexCartaRival != null;
 
-    if (permiso.tipo === 'propia') {
+    if (permiso.tipo === 'ver-carta-propia') {
       if (quiereVerRival) {
         throw new Error('La carta 10 solo permite ver una carta propia');
       }
@@ -594,7 +654,7 @@ export class GameManager {
         indexCartaPropia,
       );
 
-      this.limpiarPermisoVerCarta(partida.gameId);
+      this.limpiarPermisoHabilidad(partida.gameId);
       this.avanzarTurno(partida);
       return { cartaPropia };
     }
@@ -615,7 +675,7 @@ export class GameManager {
 
     const cartaRival = this.obtenerCartaDeJugador(partida, rivalId, indexCartaRival);
 
-    this.limpiarPermisoVerCarta(partida.gameId);
+    this.limpiarPermisoHabilidad(partida.gameId);
     this.avanzarTurno(partida);
 
     return {
@@ -728,7 +788,7 @@ export class GameManager {
     this.roomToGame.delete(partida.roomId);
     this.reaccionCarta.delete(partida.gameId);
     this.reaccionUserId.delete(partida.gameId);
-    this.permisosVerCarta.delete(partida.gameId);
+    this.permisosHabilidad.delete(partida.gameId);
   }
 
   private validarFinPartidaPorSinCartas(partida: Game, userId: string): boolean {
@@ -817,5 +877,62 @@ export class GameManager {
       numCartas,
       reshuffle,
     };
+  }
+
+  hacerRobarCarta(partida: Game, userId: string, adversarioId : string) 
+    : ResultadoRobarCarta {
+    this.validarAccionTurno(partida, userId,"RESOLVE_SKILL");
+    
+    //comprobar que el jugador puede activar la habilidad
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, userId, [
+        'hacer-robar-carta'
+    ]);
+
+    if(permiso.tipo !== 'hacer-robar-carta'){
+        throw new Error('El permiso que se tiene no es para que otro jugador \
+            robe una carta');
+    }
+
+    const idEnPartida = this.obtenerIndiceJugador(partida, adversarioId);
+    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+    const reshuffleInfo = this.intentarRebarajarDescartes(partida);
+    
+    const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
+    
+    if (!cartaRobada) {
+      throw new Error(SIN_CARTAS_ERROR_MESSAGE);
+    }
+
+    estadoJugador.cartasMano[estadoJugador.cartasMano.length] = cartaRobada;
+    
+    reshuffleInfo.cantidadCartasMazo = partida.estadoGlobal.cartasVigentes.length;
+
+    this.limpiarPermisoHabilidad(partida.gameId);
+    return {
+      cartaRobada,
+      reshuffle: reshuffleInfo,
+    };
+  }
+
+  protegerCarta(partida: Game, userId: string, numCarta: number) : Boolean {
+    this.validarAccionTurno(partida,userId,'RESOLVE_SKILL');   
+    
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, userId, [
+        'proteger-carta'
+    ]);
+
+    if(permiso.tipo !== 'proteger-carta'){
+        throw new Error('El permiso que se tiene no es para que otro jugador \
+            robe una carta');
+    }
+
+    const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+    estadoJugador[numCarta].protegida = true;
+    this.limpiarPermisoHabilidad(partida.gameId);
+
+    return true;
   }
 }
