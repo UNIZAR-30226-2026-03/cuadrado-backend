@@ -66,7 +66,7 @@ interface cuboPayload {
 })
 export class GameGateway {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   constructor(
     private readonly gameService: GameService,
