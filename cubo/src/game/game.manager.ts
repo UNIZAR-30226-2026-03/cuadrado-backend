@@ -22,7 +22,8 @@ export type TipoPermisoHabilidad =
   | 'intercambiar-carta'
   | 'intercambiar-todas'
   | 'hacer-robar-carta'
-  | 'proteger-carta';
+  | 'proteger-carta'
+  | 'saltar-turno-jugador';
 
 type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia' })
@@ -30,7 +31,8 @@ type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'intercambiar-carta' })
   | (PermisoHabilidadBase & { tipo: 'intercambiar-todas' })
   | (PermisoHabilidadBase & { tipo: 'hacer-robar-carta' })
-  | (PermisoHabilidadBase & { tipo: 'proteger-carta' });
+  | (PermisoHabilidadBase & { tipo: 'proteger-carta' })
+  | (PermisoHabilidadBase & { tipo: 'saltar-turno-jugador'});
 
 export interface ResultadoVerCarta {
   cartaPropia: Card;
@@ -128,6 +130,20 @@ export class GameManager {
   private avanzarTurno(partida: Game) {
     const totalJugadores = partida.estadoGlobal.turnoJugadores.length;
     partida.estadoGlobal.turn = (partida.estadoGlobal.turn + 1) % totalJugadores;
+
+    for (let i = 0; i < totalJugadores; i++) {
+      const jugadorId = this.getTurnUserId(partida);
+      const idEnPartida = this.obtenerIndiceJugador(partida, jugadorId);
+      const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+      if (!estadoJugador.saltarTurno) {
+        break;
+      }
+
+      estadoJugador.saltarTurno = false;
+      partida.estadoGlobal.turn = (partida.estadoGlobal.turn + 1) % totalJugadores;
+    }
+
     this.limpiarPermisoHabilidad(partida.gameId);
     this.cambiarFase(partida, 'WAIT_DRAW');
     this.actualizarCuboTrasAvanceTurno(partida);
@@ -250,6 +266,15 @@ export class GameManager {
         this.registrarPermisoHabilidad(partida, {
             jugadorId,
             tipo: 'proteger-carta',
+            turno: partida.estadoGlobal.turn,
+        });
+        return true;
+    }
+
+    if(cartaDescartada.carta === 4) {
+        this.registrarPermisoHabilidad(partida, {
+            jugadorId,
+            tipo: 'saltar-turno-jugador',
             turno: partida.estadoGlobal.turn,
         });
     }
@@ -431,6 +456,27 @@ export class GameManager {
     return carta;
   }
 
+  private consumirProteccionSiCartaAjena(
+    partida: Game,
+    actorId: string,
+    propietarioId: string,
+    carta: Card,
+    accion: 'intercambiar' | 'visualizar',
+  ) {
+    if (actorId === propietarioId || !carta.protegida) {
+      return;
+    }
+
+    carta.protegida = false;
+    partida.updatedAt = new Date();
+
+    if (accion === 'intercambiar') {
+      throw new Error('La carta seleccionada está protegida y no puede intercambiarse');
+    }
+
+    throw new Error('La carta seleccionada está protegida y no puede visualizarse');
+  }
+
   inicioPartida(
     numJugadores: number,
     codigoSala: string,
@@ -448,6 +494,7 @@ export class GameManager {
       () => ({
         cartasMano: [],
         habilidadesActivadas: [],
+        saltarTurno : false,
       }),
     );
 
@@ -621,6 +668,14 @@ export class GameManager {
       throw new Error('El destinatario no tiene en la mano la carta seleccionada');
     }
 
+    this.consumirProteccionSiCartaAjena(
+      partida,
+      remitenteId,
+      destinatarioId,
+      cartaDestinatario,
+      'intercambiar',
+    );
+
     partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano[numCartaDestinatario] =
       cartaRemitente;
     partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano[numCartaRemitente] =
@@ -675,6 +730,14 @@ export class GameManager {
 
     const cartaRival = this.obtenerCartaDeJugador(partida, rivalId, indexCartaRival);
 
+    this.consumirProteccionSiCartaAjena(
+      partida,
+      solicitanteId,
+      rivalId,
+      cartaRival,
+      'visualizar',
+    );
+
     this.limpiarPermisoHabilidad(partida.gameId);
     this.avanzarTurno(partida);
 
@@ -689,6 +752,19 @@ export class GameManager {
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
     const idEnPartidaD = this.obtenerIndiceJugador(partida, destinatarioId);
+    const cartaProtegidaDestinatario = partida.estadoGlobal.jugadores[
+      idEnPartidaD
+    ].cartasMano.find((carta) => carta.protegida);
+
+    if (cartaProtegidaDestinatario) {
+      this.consumirProteccionSiCartaAjena(
+        partida,
+        remitenteId,
+        destinatarioId,
+        cartaProtegidaDestinatario,
+        'intercambiar',
+      );
+    }
 
     const cartasRemitente = [
       ...partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano,
@@ -927,13 +1003,49 @@ export class GameManager {
             robe una carta');
     }
 
-    const idEnPartida = this.obtenerIndiceJugador(partida, userId);
-    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
-
-    estadoJugador[numCarta].protegida = true;
+    const carta = this.obtenerCartaDeJugador(partida, userId, numCarta);
+    carta.protegida = true;
+    partida.updatedAt = new Date();
     this.limpiarPermisoHabilidad(partida.gameId);
 
     return true;
+  }
+
+  saltarTurnoJugador(partida : Game, userId: string, adversarioId : string) 
+    : Boolean {
+    this.validarAccionTurno(partida,userId,'RESOLVE_SKILL');
+
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, userId, [
+        'saltar-turno-jugador'
+    ]);
+
+    if(!permiso){
+      throw new Error('No se tienen permisos para realizar esta acción');
+    }
+    const idEnPartidaAdversario = this.obtenerIndiceJugador(partida,adversarioId);
+    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartidaAdversario];
+
+    estadoJugador.saltarTurno = true;
+
+    this.limpiarPermisoHabilidad(partida.gameId);
+    
+    return true;
+  }
+
+  private comprobarSaltarTurno(partida : Game, userId : string) : Boolean{
+    const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+
+    if(!idEnPartida){
+      throw new Error('El jugador no está registrado en la partida');
+    }
+
+    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+    if(estadoJugador.saltarTurno === true){
+      return true;
+    } else{
+      return false;
+    }
   }
 
   // ----------------------------------------------------------

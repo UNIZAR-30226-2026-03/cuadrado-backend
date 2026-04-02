@@ -34,6 +34,7 @@ export interface GameState {
 
 export interface PlayerState {
     cartasMano : Card[];
+    saltarTurno : Boolean;
     habilidadesActivadas : number[];
     cartaPendiente?: Card;
 }
