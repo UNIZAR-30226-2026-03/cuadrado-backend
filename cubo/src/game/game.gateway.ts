@@ -10,7 +10,10 @@ import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
 import { FinPartidaMotivo, Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
-import { SIN_CARTAS_ERROR_MESSAGE } from './game.manager';
+import {
+  HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE,
+  SIN_CARTAS_ERROR_MESSAGE,
+} from './game.manager';
 
 interface robarCartaPayload {
   gameId: string;
@@ -52,6 +55,14 @@ interface protegerCartaPayload{
 }
 
 interface calcularPuntosJugadorPayload{
+  gameId: string,
+}
+
+interface jugadorMenosPuntuacionPayload{
+  gameId: string,
+}
+
+interface desactivarProximaHabilidadPayload{
   gameId: string,
 }
 
@@ -120,6 +131,18 @@ export class GameGateway {
       partidaId : partida.gameId,
       remitente: idRemitente,
       destinatario: idDestinatario,
+    });
+  }
+
+  private notificarTodosHabilidadDenegada(
+    partida: Game,
+    jugadorId: string,
+    habilidad: string,
+  ) {
+    this.server.to(partida.roomId).emit('game:habilidad-denegada', {
+      gameId: partida.gameId,
+      jugadorId,
+      habilidad,
     });
   }
   
@@ -195,6 +218,13 @@ export class GameGateway {
 
   private esErrorSinCartas(error: unknown): boolean {
     return error instanceof Error && error.message === SIN_CARTAS_ERROR_MESSAGE;
+  }
+
+  private esErrorHabilidadDenegada(error: unknown): boolean {
+    return (
+      error instanceof Error &&
+      error.message === HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE
+    );
   }
 
   //FIX: ahora se comprueba que el usuario que solicita iniciar la partida sea
@@ -350,11 +380,16 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: verCartaPayload
   ) {
+    let partida: Game | undefined;
+    let userId: string | undefined;
+
     try {
-      const { partida, userId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
+      userId = contexto.userId;
 
       const resultado = this.gameService.verCarta(
       partida,
@@ -377,6 +412,15 @@ export class GameGateway {
         gameId: partida.gameId,
       };
     } catch (error) {
+      if (this.esErrorHabilidadDenegada(error) && partida && userId) {
+        this.notificarTodosHabilidadDenegada(partida, userId, 'ver-carta');
+        this.finalizarPartidaYSincronizarSala(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          habilidadDenegada: true,
+        };
+      }
       this.handleWsError(error);
     }
 
@@ -414,11 +458,16 @@ export class GameGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: hacerRobarCartaPayload,
   ){
+    let partida: Game | undefined;
+    let remitenteId: string | undefined;
+
     try{
-      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
+      remitenteId = contexto.userId;
 
       this.gameService.hacerRobarCarta(partida, remitenteId,
         payload.adversarioId);
@@ -431,20 +480,38 @@ export class GameGateway {
         //Todo: rellenar bien el payload
       };
       } catch (error){
+        if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
+          this.notificarTodosHabilidadDenegada(
+            partida,
+            remitenteId,
+            'hacer-robar-carta',
+          );
+          this.finalizarPartidaYSincronizarSala(partida);
+          return {
+            success: true,
+            gameId: partida.gameId,
+            habilidadDenegada: true,
+          };
+        }
         this.handleWsError(error);
     }
   }
 
-  @SubscribeMessage('game:hacer-robar-carta')
+  @SubscribeMessage('game:proteger-carta')
   protegerCarta(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: protegerCartaPayload,
   ){
+    let partida: Game | undefined;
+    let remitenteId: string | undefined;
+
     try{
-      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
+      remitenteId = contexto.userId;
 
       this.gameService.protegerCarta(partida, remitenteId,
         payload.numCarta);
@@ -453,6 +520,19 @@ export class GameGateway {
         success: true,
       };
       } catch (error){
+        if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
+          this.notificarTodosHabilidadDenegada(
+            partida,
+            remitenteId,
+            'proteger-carta',
+          );
+          this.finalizarPartidaYSincronizarSala(partida);
+          return {
+            success: true,
+            gameId: partida.gameId,
+            habilidadDenegada: true,
+          };
+        }
         this.handleWsError(error);
     }
   }
@@ -482,6 +562,74 @@ export class GameGateway {
     } catch (error){
       this.handleWsError(error);
     } 
+  }
+
+  @SubscribeMessage('game:jugador-menos-puntuacion')
+  jugadorMenosPuntuacion(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: jugadorMenosPuntuacionPayload,
+  ){
+    let partida: Game | undefined;
+    let userId: string | undefined;
+
+    try{
+      const contexto = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+      partida = contexto.partida;
+      userId = contexto.userId;
+
+      const jugadorId = this.gameService.jugadorMenosPuntuacion(partida, userId);
+
+      this.server.to(client.id).emit('game:jugador-menos-puntuacion-calculado',{
+        gameId: payload.gameId,
+        jugadorId: jugadorId,
+      });
+
+      return {
+        success: true,
+        gameId: payload.gameId,
+        jugadorId: jugadorId,
+      }
+    } catch (error){
+      if (this.esErrorHabilidadDenegada(error) && partida && userId) {
+        this.notificarTodosHabilidadDenegada(
+          partida,
+          userId,
+          'jugador-menos-puntuacion',
+        );
+        this.finalizarPartidaYSincronizarSala(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          habilidadDenegada: true,
+        };
+      }
+      this.handleWsError(error);
+    } 
+  }
+
+  @SubscribeMessage('game:desactivar-proxima-habilidad')
+  desactivarProximaHabilidad(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: desactivarProximaHabilidadPayload,
+  ){
+    try{
+      const { partida, userId } = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      this.gameService.desactivarProximaHabilidad(partida, userId);
+
+      return {
+        success: true,
+        gameId: payload.gameId,
+      };
+    } catch (error){
+      this.handleWsError(error);
+    }
   }
 
   @SubscribeMessage('game:solicitar-carta-sobre-otra')

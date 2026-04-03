@@ -23,7 +23,8 @@ export type TipoPermisoHabilidad =
   | 'intercambiar-todas'
   | 'hacer-robar-carta'
   | 'proteger-carta'
-  | 'saltar-turno-jugador';
+  | 'saltar-turno-jugador'
+  | 'jugador-menos-puntuacion';
 
 type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia' })
@@ -32,7 +33,8 @@ type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'intercambiar-todas' })
   | (PermisoHabilidadBase & { tipo: 'hacer-robar-carta' })
   | (PermisoHabilidadBase & { tipo: 'proteger-carta' })
-  | (PermisoHabilidadBase & { tipo: 'saltar-turno-jugador'});
+  | (PermisoHabilidadBase & { tipo: 'saltar-turno-jugador'})
+  | (PermisoHabilidadBase & { tipo: 'jugador-menos-puntuacion'});
 
 export interface ResultadoVerCarta {
   cartaPropia: Card;
@@ -57,6 +59,8 @@ export interface ResultadoPonerCartaSobreOtra {
 
 export const SIN_CARTAS_ERROR_MESSAGE =
   'No quedan cartas suficientes para continuar la partida';
+export const HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE =
+  'La habilidad no tiene efecto porque hay una restriccion activa';
 
 type AccionTurno =
   | 'DRAW'
@@ -82,6 +86,8 @@ export class GameManager {
 
   // control de los requerimientos de habilidades pendientes por partida
   private readonly permisosHabilidad = new Map<string, PermisoHabilidad>();
+
+  private countHabilidadesSinEfecto = new Map<string,number>();
 
   getGameById(gameId: string): Game {
     const partida = this.games.get(gameId);
@@ -115,6 +121,47 @@ export class GameManager {
     }
 
     return idEnPartida;
+  }
+
+  private obtenerUserIdPorIndice(partida: Game, idEnPartida: number): string {
+    const userId = partida.estadoGlobal.turnoJugadores[idEnPartida];
+
+    if (!userId) {
+      throw new Error('No existe ningún jugador con ese id en la partida');
+    }
+
+    return userId;
+  }
+
+  private verificarHabilidadSinEfecto(gameId : string) : boolean{
+    let habilidadesSinEfecto = this.countHabilidadesSinEfecto.get(gameId);
+
+    if(habilidadesSinEfecto != null && habilidadesSinEfecto >  0) {
+      habilidadesSinEfecto -= 1;
+      this.countHabilidadesSinEfecto.set(gameId,habilidadesSinEfecto);
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  private cancelarHabilidadInmediataSiCorresponde(partida: Game) {
+    if (!this.verificarHabilidadSinEfecto(partida.gameId)) {
+      return;
+    }
+
+    this.limpiarPermisoHabilidad(partida.gameId);
+    this.avanzarTurno(partida);
+    throw new Error(HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE);
+  }
+
+  private cancelarHabilidadAlmacenadaSiCorresponde(partida: Game) {
+    if (!this.verificarHabilidadSinEfecto(partida.gameId)) {
+      return;
+    }
+
+    partida.updatedAt = new Date();
+    throw new Error(HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE);
   }
 
   private actualizarDeadlineTurno(partida: Game) {
@@ -277,7 +324,23 @@ export class GameManager {
             tipo: 'saltar-turno-jugador',
             turno: partida.estadoGlobal.turn,
         });
+        return true;
     }
+
+    if(cartaDescartada.carta === 7) {
+        const idEnPartida = this.obtenerIndiceJugador(partida, jugadorId);
+        partida.estadoGlobal.jugadores[idEnPartida].habilidadesActivadas.push(7);
+        partida.updatedAt = new Date();
+        return false;
+    }
+
+    if(cartaDescartada.carta === 8) {
+        const idEnPartida = this.obtenerIndiceJugador(partida, jugadorId);
+        partida.estadoGlobal.jugadores[idEnPartida].habilidadesActivadas.push(8);
+        partida.updatedAt = new Date();
+        return false;
+    }
+
     return false;
   }
 
@@ -524,6 +587,7 @@ export class GameManager {
     this.abrirVentanaReaccionGlobal(partida);
     this.games.set(gameCode, partida);
     this.roomToGame.set(codigoSala, gameCode);
+    this.countHabilidadesSinEfecto.set(gameCode, 0);
     return partida;
   }
 
@@ -696,6 +760,8 @@ export class GameManager {
       'ver-carta-propia-y-rival',
     ]);
 
+    this.cancelarHabilidadInmediataSiCorresponde(partida);
+
     const quiereVerRival = rivalId != null || indexCartaRival != null;
 
     if (permiso.tipo === 'ver-carta-propia') {
@@ -865,6 +931,7 @@ export class GameManager {
     this.reaccionCarta.delete(partida.gameId);
     this.reaccionUserId.delete(partida.gameId);
     this.permisosHabilidad.delete(partida.gameId);
+    this.countHabilidadesSinEfecto.delete(partida.gameId);
   }
 
   private validarFinPartidaPorSinCartas(partida: Game, userId: string): boolean {
@@ -969,6 +1036,8 @@ export class GameManager {
             robe una carta');
     }
 
+    this.cancelarHabilidadInmediataSiCorresponde(partida);
+
     const idEnPartida = this.obtenerIndiceJugador(partida, adversarioId);
     const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
 
@@ -1003,6 +1072,8 @@ export class GameManager {
             robe una carta');
     }
 
+    this.cancelarHabilidadInmediataSiCorresponde(partida);
+
     const carta = this.obtenerCartaDeJugador(partida, userId, numCarta);
     carta.protegida = true;
     partida.updatedAt = new Date();
@@ -1022,6 +1093,9 @@ export class GameManager {
     if(!permiso){
       throw new Error('No se tienen permisos para realizar esta acción');
     }
+
+    this.cancelarHabilidadInmediataSiCorresponde(partida);
+
     const idEnPartidaAdversario = this.obtenerIndiceJugador(partida,adversarioId);
     const estadoJugador = partida.estadoGlobal.jugadores[idEnPartidaAdversario];
 
@@ -1031,21 +1105,73 @@ export class GameManager {
     
     return true;
   }
+    
+  jugadorMenosPuntuacion(partida : Game, userId : string) : string {
+    this.validarAccionTurno(partida,userId,'OWNER_TURN_ONLY');
 
-  private comprobarSaltarTurno(partida : Game, userId : string) : Boolean{
+    if (partida.estadoGlobal.phase !== 'WAIT_DRAW') {
+      throw new Error('Solo puedes usar esta habilidad al inicio de tu turno');
+    }
+
     const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+    const habilidades = partida.estadoGlobal.jugadores[idEnPartida]
+      .habilidadesActivadas;
+    const index = habilidades.indexOf(7);
 
-    if(!idEnPartida){
-      throw new Error('El jugador no está registrado en la partida');
+    if (index === -1) {
+      throw new Error('No tienes esta habilidad almacenada');
     }
 
-    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+    habilidades.splice(index, 1);
 
-    if(estadoJugador.saltarTurno === true){
-      return true;
-    } else{
-      return false;
+    this.cancelarHabilidadAlmacenadaSiCorresponde(partida);
+
+    let jugadorMinPuntuacion = this.obtenerUserIdPorIndice(partida, 0);
+    let aux = this.calcularPuntosJugador(partida, jugadorMinPuntuacion);
+
+    for(let i = 1; i < partida.estadoGlobal.jugadores.length; i++){
+      const userId = this.obtenerUserIdPorIndice(partida,i);
+      
+      let aux2 = this.calcularPuntosJugador(partida,userId);
+      
+      if(aux2 < aux){
+        aux = aux2;
+        jugadorMinPuntuacion = userId;
+      }
     }
+
+    partida.updatedAt = new Date();
+
+    return jugadorMinPuntuacion;
+  }
+
+  desactivarProximaHabilidad(partida : Game, userId :string) : boolean {
+    this.validarAccionTurno(partida,userId,'OWNER_TURN_ONLY');
+
+    if (partida.estadoGlobal.phase !== 'WAIT_DRAW') {
+      throw new Error('Solo puedes usar esta habilidad al inicio de tu turno');
+    }
+
+    const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+    const habilidades = partida.estadoGlobal.jugadores[idEnPartida]
+      .habilidadesActivadas;
+    const index = habilidades.indexOf(8);
+
+    if(index === -1){
+      throw new Error('El jugador no tiene permiso para usar esta \habilidad');
+    }
+
+    habilidades.splice(index, 1);
+
+    let numHabilidadesSinEfecto =
+      this.countHabilidadesSinEfecto.get(partida.gameId) ?? 0;
+
+    numHabilidadesSinEfecto += 1;
+
+    this.countHabilidadesSinEfecto.set(partida.gameId,numHabilidadesSinEfecto);
+    partida.updatedAt = new Date();
+
+    return true;
   }
 
   // ----------------------------------------------------------

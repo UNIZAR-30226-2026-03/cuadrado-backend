@@ -164,6 +164,14 @@ export class GameService {
     this.gameManager.protegerCarta(partida,userId,numCarta);
   }
 
+  jugadorMenosPuntuacion(partida: Game, userId: string) {
+    return this.gameManager.jugadorMenosPuntuacion(partida, userId);
+  }
+
+  desactivarProximaHabilidad(partida: Game, userId: string) {
+    return this.gameManager.desactivarProximaHabilidad(partida, userId);
+  }
+
   calcularPuntosJugador(partida: Game, userId: string){
     return this.gameManager.calcularPuntosJugador(partida, userId);
   }
