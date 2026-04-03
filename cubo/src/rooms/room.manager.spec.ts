@@ -13,7 +13,6 @@ describe('RoomManager', () => {
     const publicRoom = roomManager.createRoom('user-1', 'socket-1', {
       name: 'Public Room',
       rules: {
-        maxPlayers: 4,
         turnTimeSeconds: 30,
         isPrivate: false,
         fillWithBots: false,
@@ -25,7 +24,6 @@ describe('RoomManager', () => {
     const startedPublicRoom = roomManager.createRoom('user-4', 'socket-4', {
       name: 'Started Public Room',
       rules: {
-        maxPlayers: 4,
         turnTimeSeconds: 30,
         isPrivate: false,
         fillWithBots: false,
@@ -38,7 +36,6 @@ describe('RoomManager', () => {
     roomManager.createRoom('user-3', 'socket-3', {
       name: 'Private Room',
       rules: {
-        maxPlayers: 4,
         turnTimeSeconds: 30,
         isPrivate: true,
         fillWithBots: false,
@@ -51,7 +48,6 @@ describe('RoomManager', () => {
         code: publicRoom.code,
         playersCount: 2,
         rules: {
-          maxPlayers: 4,
           turnTimeSeconds: 30,
           isPrivate: false,
           fillWithBots: false,

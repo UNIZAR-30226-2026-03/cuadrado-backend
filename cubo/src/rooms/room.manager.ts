@@ -4,7 +4,7 @@ import {
   Room,
   RoomState,
 } from './interfaces/room.interface';
-import { RulesConfig } from './interfaces/rules-config.interface';
+import { MAX_PLAYERS, RulesConfig } from './interfaces/rules-config.interface';
 
 const RECONNECT_TIMEOUT_MS = 25000;
 const ROOM_CODE_LENGTH = 6;
@@ -74,7 +74,7 @@ export class RoomManager {
       throw new Error('Room already started');
     }
 
-    if (room.players.size >= room.rules.maxPlayers) {
+    if (room.players.size >= MAX_PLAYERS) {
       throw new Error('Room is full');
     }
 
