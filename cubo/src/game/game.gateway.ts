@@ -1,6 +1,8 @@
 import {
   ConnectedSocket,
   MessageBody,
+  OnGatewayInit,
+  OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -79,19 +81,70 @@ interface cuboPayload {
   gameId: string;
 }
 
+interface iniciarPartidaPayload {
+  savedGameId?: string;
+}
+
+interface guardarYCerrarPayload {
+  gameId: string;
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
     credentials: true,
   },
 })
-export class GameGateway {
+//Se ha preguntado a chatGPT cual es la mejor manera de implementar el ticker
+//De ahi se ha sacado la idea de implementar OnGateway
+export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
+
+  private timeoutTicker?: NodeJS.Timeout;
 
   constructor(
     private readonly gameService: GameService,
   ) {}
+
+  afterInit(): void {
+    this.timeoutTicker = setInterval(() => {
+      this.procesarTimeoutsTurno();
+    }, 1000);
+  }
+
+  handleDisconnect(): void {
+    // Hook required by lifecycle interface; socket-level disconnect is handled in RoomsGateway.
+  }
+
+  onModuleDestroy(): void {
+    if (!this.timeoutTicker) {
+      return;
+    }
+
+    clearInterval(this.timeoutTicker);
+    this.timeoutTicker = undefined;
+  }
+
+  private procesarTimeoutsTurno() {
+    try {
+      const partidasAfectadas = this.gameService.resolverTimeoutsTurnoActivos();
+
+      for (const partida of partidasAfectadas) {
+        this.server.to(partida.roomId).emit('game:turno-expirado', {
+          gameId: partida.gameId,
+          turn: partida.estadoGlobal.turn,
+          phase: partida.estadoGlobal.phase,
+          turnDeadlineAt: partida.estadoGlobal.turnDeadlineAt,
+          //TODO: Porque turnDeadlineAt? que devolvera exactamente?
+        });
+
+        this.finalizarPartidaYSincronizarSala(partida);
+      }
+    } catch {
+      // Never throw inside ticker; game actions keep reporting detailed errors.
+    }
+  }
 
   private notificarTodosCartaRobada(partida : Game ){
     this.server.to(partida.roomId).emit('game:carta-robada',{
@@ -230,8 +283,9 @@ export class GameGateway {
   //FIX: ahora se comprueba que el usuario que solicita iniciar la partida sea
   //el host de la misma.
   @SubscribeMessage('game:iniciar-partida')
-  iniciarPartida(
+  async iniciarPartida(
     @ConnectedSocket() client: Socket,
+    @MessageBody() payload?: iniciarPartidaPayload,
   ){
     try {
       const userId = this.getUserId(client);
@@ -247,12 +301,64 @@ export class GameGateway {
         throw new Error('La sala ya está iniciada');
       }
 
-      const partida = this.gameService.inicioPartida(room);
+      const partida = payload?.savedGameId
+        ? await this.gameService.cargarPartidaGuardada(
+            payload.savedGameId,
+            userId,
+            client.id,
+          )
+        : this.gameService.inicioPartida(room);
       this.notificarTodosComienzoPartida(partida);
 
       return{
         success: true,
+        gameId: partida.gameId,
+        roomId: partida.roomId,
+        loadedFromSave: Boolean(payload?.savedGameId),
       }
+    } catch (error) {
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:guardar-y-cerrar')
+  async guardarYCerrarPartida(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: guardarYCerrarPayload,
+  ) {
+    try {
+      const { partida, userId } = this.getValidatedGameContext(client, payload.gameId);
+
+      const resultado = await this.gameService.guardarYcerrarPartida(partida, userId);
+
+      this.server.to(resultado.roomCode).emit('room:closed', {
+        reason: 'Host saved and closed the room',
+        roomCode: resultado.roomCode,
+        savedGameId: resultado.gameId,
+      });
+
+      this.server.in(resultado.roomCode).socketsLeave(resultado.roomCode);
+
+      return {
+        success: true,
+        gameId: resultado.gameId,
+        roomCode: resultado.roomCode,
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:listar-partidas-guardadas')
+  async listarPartidasGuardadas(@ConnectedSocket() client: Socket) {
+    try {
+      const userId = this.getUserId(client);
+      const partidas = await this.gameService.listarPartidasGuardadas(userId);
+
+      return {
+        success: true,
+        partidas,
+      };
     } catch (error) {
       this.handleWsError(error);
     }

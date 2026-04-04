@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   GameManager,
+  PersistedGameState,
   ResultadoPonerCartaSobreOtra,
   ResultadoRobarCarta,
 } from './game.manager';
@@ -22,6 +23,13 @@ export interface ValidatedStartContext {
   player: Player;
 }
 
+export interface SavedGameSummary {
+  gameId: string;
+  creatorId: string;
+  updatedAt: Date;
+  players: string[];
+}
+
 @Injectable()
 export class GameService {
   constructor(
@@ -35,6 +43,168 @@ export class GameService {
   }
   getGameByRoomId(roomId: string): Game {
     return this.gameManager.getGameByRoomId(roomId);
+  }
+
+  resolverTimeoutsTurnoActivos(): Game[] {
+    const partidasAfectadas: Game[] = [];
+    const partidasActivas = this.gameManager.getActiveGames();
+
+    for (const partida of partidasActivas) {
+      const huboTimeout = this.gameManager.resolverTimeoutTurno(partida);
+      if (huboTimeout) {
+        partidasAfectadas.push(partida);
+      }
+    }
+
+    return partidasAfectadas;
+  }
+
+  async guardarYcerrarPartida(game: Game, hostUserId: string): Promise<{
+    roomCode: string;
+    gameId: string;
+  }> {
+    const room = this.roomsService.getRoomByUserId(hostUserId);
+    if (!room) {
+      throw new Error('El usuario no pertenece a ninguna sala');
+    }
+
+    if (room.code !== game.roomId) {
+      throw new Error('La partida no corresponde a la sala del usuario');
+    }
+
+    if (room.hostId !== hostUserId) {
+      throw new Error('Solo el creador de la sala puede guardar y cerrar');
+    }
+
+    const persisted = this.gameManager.exportarEstadoPersistido(game);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.gameState.upsert({
+        where: { name: persisted.gameId },
+        create: {
+          name: persisted.gameId,
+          creatorId: hostUserId,
+          habilidadesActivadas: persisted.habilidadesActivadas,
+          discardedCards: persisted.discardedCards,
+          turn: persisted.turn,
+          updatedAt: new Date(),
+        },
+        update: {
+          creatorId: hostUserId,
+          habilidadesActivadas: persisted.habilidadesActivadas,
+          discardedCards: persisted.discardedCards,
+          turn: persisted.turn,
+          updatedAt: new Date(),
+        },
+      });
+
+      await tx.pausedGamePlayer.deleteMany({
+        where: { roomId: persisted.gameId },
+      });
+
+      await tx.pausedGamePlayer.createMany({
+        data: persisted.players.map((player) => ({
+          roomId: persisted.gameId,
+          userId: player.userId,
+          turnOrder: player.turnOrder,
+          cards: player.cards,
+          habilidades: player.habilidades,
+        })),
+      });
+    });
+
+    this.gameManager.cerrarPartidaActiva(game.gameId);
+
+    const leaveResult = this.roomsService.leaveRoom(hostUserId);
+    if (!leaveResult.room || !leaveResult.isHostLeaving) {
+      throw new Error('No se pudo cerrar la sala tras guardar la partida');
+    }
+
+    return {
+      roomCode: leaveResult.room.code,
+      gameId: game.gameId,
+    };
+  }
+
+  async listarPartidasGuardadas(creatorId: string): Promise<SavedGameSummary[]> {
+    const partidas = await this.prisma.gameState.findMany({
+      where: { creatorId },
+      include: { pausedGamePlayers: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return partidas.map((partida) => ({
+      gameId: partida.name,
+      creatorId: partida.creatorId,
+      updatedAt: partida.updatedAt,
+      players: partida.pausedGamePlayers
+        .sort((a, b) => a.turnOrder - b.turnOrder)
+        .map((player) => player.userId),
+    }));
+  }
+
+  async cargarPartidaGuardada(
+    gameId: string,
+    hostUserId: string,
+    socketId: string,
+  ): Promise<Game> {
+    const { room } = this.validateStartContext(hostUserId, socketId);
+
+    if (room.hostId !== hostUserId) {
+      throw new Error('Solo el creador de la sala puede cargar una partida guardada');
+    }
+
+    const snapshot = await this.prisma.gameState.findUnique({
+      where: { name: gameId },
+      include: { pausedGamePlayers: true },
+    });
+
+    if (!snapshot) {
+      throw new Error('No existe una partida guardada con ese identificador');
+    }
+
+    if (snapshot.creatorId !== hostUserId) {
+      throw new Error('No tienes permisos para cargar esta partida guardada');
+    }
+
+    const playersGuardados = snapshot.pausedGamePlayers;
+
+    const idsGuardados = new Set(playersGuardados.map((player) => player.userId));
+    const idsSala = new Set(Array.from(room.players.keys()));
+
+    if (idsGuardados.size !== idsSala.size) {
+      throw new Error('La sala no tiene los mismos jugadores que la partida guardada');
+    }
+
+    for (const userId of idsGuardados) {
+      if (!idsSala.has(userId)) {
+        throw new Error('La sala no tiene los mismos jugadores que la partida guardada');
+      }
+    }
+
+    const allConnected = Array.from(room.players.values()).every(
+      (player) => player.connected,
+    );
+    if (!allConnected) {
+      throw new Error('Todos los jugadores deben estar conectados para cargar la partida');
+    }
+
+    const persisted: PersistedGameState = {
+      gameId: snapshot.name,
+      turn: snapshot.turn,
+      habilidadesActivadas: snapshot.habilidadesActivadas,
+      discardedCards: snapshot.discardedCards,
+      players: playersGuardados.map((player) => ({
+        userId: player.userId,
+        turnOrder: player.turnOrder,
+        cards: player.cards,
+        habilidades: player.habilidades,
+      })),
+    };
+
+    room.started = true;
+
+    return this.gameManager.cargarEstadoPersistido(room.code, persisted);
   }
 
   validateStartContext(userId: string, socketId: string): ValidatedStartContext {
@@ -113,6 +283,8 @@ export class GameService {
     const playerUserIds = Array.from(room.players.values()).map(
       (player) => player.userId,
     );
+
+    room.started = true;
 
     return this.gameManager.inicioPartida(
       room.players.size,
