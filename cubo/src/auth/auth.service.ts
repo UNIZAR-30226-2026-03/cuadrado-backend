@@ -45,7 +45,6 @@ export class AuthService {
         passwordHash,
         cubitos: 0,
         eloRating: 1200,
-        rankPlacement: 0,
         gamesPlayed: 0,
         gamesWon: 0,
         numPlayersPlayed: 0,

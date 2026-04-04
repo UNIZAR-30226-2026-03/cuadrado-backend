@@ -8,6 +8,7 @@ import { FgPasswdModule } from './forgotten_passwd/fg_passwd.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { SkinsModule } from './skins/skins.module';
 import { GameModule } from './game/game.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { GameModule } from './game/game.module';
     FgPasswdModule,
     RoomsModule,
     GameModule,
+    UsersModule,
     SkinsModule,
   ],
   controllers: [AppController],

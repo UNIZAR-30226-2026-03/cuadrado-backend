@@ -39,7 +39,7 @@ interface StartRoomPayload {
 })
 export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   constructor(private readonly roomsService: RoomsService) {}
 

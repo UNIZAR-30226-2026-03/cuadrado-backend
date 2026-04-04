@@ -18,4 +18,6 @@ export interface Card {
   carta: number;
   palo: PaloCarta;
   habilidad: Habilidad;
+  puntos: number;
+  protegida: boolean;
 }

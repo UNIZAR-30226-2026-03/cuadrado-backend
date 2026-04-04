@@ -26,6 +26,10 @@ export class RoomsService {
     return this.roomManager.startRoom(userId, roomCode);
   }
 
+  resetRoomAfterGame(roomCode: string) {
+    return this.roomManager.resetRoomAfterGame(roomCode);
+  }
+
   handleDisconnect(userId: string) {
     return this.roomManager.handleDisconnect(userId);
   }
