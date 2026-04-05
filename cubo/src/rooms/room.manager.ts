@@ -1,3 +1,4 @@
+import { Injectable, Logger } from '@nestjs/common';
 import { Player } from './interfaces/player.interface';
 import {
   PublicRoomSummary,
@@ -5,6 +6,7 @@ import {
   RoomState,
 } from './interfaces/room.interface';
 import { RulesConfig } from './interfaces/rules-config.interface';
+import { BotsService } from '../bots/bots.service';
 
 const RECONNECT_TIMEOUT_MS = 25000;
 const ROOM_CODE_LENGTH = 6;
@@ -15,11 +17,16 @@ export interface CreateRoomInput {
   rules: RulesConfig;
 }
 
+@Injectable()
 export class RoomManager {
+  private readonly logger = new Logger(RoomManager.name);
+
   //mapa que relaciona roomID -> Room Objeto
   private readonly rooms = new Map<string, Room>();
   //mapa que relaciona userID->roomID
   private readonly userToRoom = new Map<string, string>();
+
+  constructor(private botsService: BotsService) {}
 
 
   // Crea una nueva sala y asigna al usuario como host. 
@@ -210,7 +217,10 @@ export class RoomManager {
     if (!allConnected) {
       throw new Error('All players must be connected to start');
     }
+    // Agregar bots si está configurado
+    this.botsService.agregarBotsARoom(room, 'easy');
 
+    
     if (room.players.size < 2) {
       throw new Error('At least 2 players required to start');
     }

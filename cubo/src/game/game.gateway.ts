@@ -8,8 +8,10 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
+import { OnModuleDestroy } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
+import { BotsService } from '../bots/bots.service';
 import { FinPartidaMotivo, Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
 import {
@@ -109,20 +111,27 @@ interface intercambiarCartaInteractivo {
 })
 //Se ha preguntado a chatGPT cual es la mejor manera de implementar el ticker
 //De ahi se ha sacado la idea de implementar OnGateway
-export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
+export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModuleDestroy {
   @WebSocketServer()
   server!: Server;
 
   private timeoutTicker?: NodeJS.Timeout;
+  private botsTicker?: NodeJS.Timeout;
 
   constructor(
     private readonly gameService: GameService,
+    private readonly botsService: BotsService,
   ) {}
 
   afterInit(): void {
     this.timeoutTicker = setInterval(() => {
       this.procesarTimeoutsTurno();
     }, 1000);
+
+    // Ticker para ejecutar acciones de bots
+    this.botsTicker = setInterval(() => {
+      this.procesarTurnosBot();
+    }, 500); // Ejecutar cada 500ms para respuesta rápida
   }
 
   handleDisconnect(): void {
@@ -130,12 +139,15 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
   }
 
   onModuleDestroy(): void {
-    if (!this.timeoutTicker) {
-      return;
+    if (this.timeoutTicker) {
+      clearInterval(this.timeoutTicker);
+      this.timeoutTicker = undefined;
     }
 
-    clearInterval(this.timeoutTicker);
-    this.timeoutTicker = undefined;
+    if (this.botsTicker) {
+      clearInterval(this.botsTicker);
+      this.botsTicker = undefined;
+    }
   }
 
   private procesarTimeoutsTurno() {
@@ -156,6 +168,134 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
     } catch {
       // Never throw inside ticker; game actions keep reporting detailed errors.
     }
+  }
+
+  /**
+   * Procesa los turnos de bots de forma automática
+   * Se ejecuta cada 500ms aproximadamente
+   */
+  private procesarTurnosBot() {
+    try {
+      const partidasActivas = this.gameService.getActiveGames();
+
+      for (const partida of partidasActivas) {
+        const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
+        
+        // Verificar si es turno de un bot
+        if (!this.botsService.esBot(turnoActualId)) {
+          continue;
+        }
+
+        // Obtener la dificultad del bot
+        const difficulty = this.botsService.extraerDificultad(turnoActualId);
+
+        // Decidir acción
+        const accion = this.botsService.decidirAccion(
+          partida,
+          turnoActualId,
+          difficulty,
+        );
+
+        // Ejecutar acción automáticamente
+        this.ejecutarAccionBot(partida, turnoActualId, accion);
+      }
+    } catch (error) {
+      // Log but don't throw - keep the ticker running
+      console.error('Error en procesarTurnosBot:', error);
+    }
+  }
+
+  /**
+   * Ejecuta una acción de bot y emite los eventos correspondientes
+   */
+  private ejecutarAccionBot(
+    partida: Game,
+    botId: string,
+    accion: any, // BotAction
+  ) {
+    try {
+      switch (accion.accion) {
+        case 'robar':
+          this.ejecutarRobarBot(partida, botId);
+          break;
+        case 'descartar-pendiente':
+          this.ejecutarDescartarPendienteBot(partida, botId);
+          break;
+        case 'carta-por-pendiente':
+          this.ejecutarCartaPorPendienteBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+          );
+          break;
+        case 'esperar':
+          // El bot espera, no hace nada
+          break;
+        default:
+          // Acción no reconocida
+          break;
+      }
+    } catch (error) {
+      console.error(
+        `Error ejecutando acción bot ${botId} (${accion.accion}):`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * El bot roba una carta
+   */
+  private ejecutarRobarBot(partida: Game, botId: string) {
+    const resultado = this.gameService.robarCarta(partida, botId);
+
+    if (resultado.reshuffle.huboRebarajado) {
+      this.notificarTodosRebarajado(partida);
+    }
+
+    this.notificarTodosCartaRobada(partida);
+    this.server.to(partida.roomId).emit('game:bot-roba-carta', {
+      gameId: partida.gameId,
+      botId,
+    });
+  }
+
+  /**
+   * El bot descarta la carta pendiente
+   */
+  private ejecutarDescartarPendienteBot(partida: Game, botId: string) {
+    const resultado = this.gameService.descartarPendiente(partida, botId);
+
+    this.finalizarPartidaYSincronizarSala(partida);
+
+    if (resultado.resultadoHabilidad.tipo === 'roba-y-sigue') {
+      this.notificarTodosCartaRobada(partida);
+    }
+
+    this.notificarTodosDescartarPendiente(partida, resultado.cartaDescartada);
+    this.server.to(partida.roomId).emit('game:bot-descarta-pendiente', {
+      gameId: partida.gameId,
+      botId,
+    });
+  }
+
+  /**
+   * El bot intercambia una carta de mano por la pendiente
+   */
+  private ejecutarCartaPorPendienteBot(
+    partida: Game,
+    botId: string,
+    cartaIndex: number,
+  ) {
+    const carta = this.gameService.cartaPorPendiente(partida, cartaIndex, botId);
+
+    this.finalizarPartidaYSincronizarSala(partida);
+
+    this.notificarTodosDescartarPendiente(partida, carta);
+    this.server.to(partida.roomId).emit('game:bot-intercambia-cartas', {
+      gameId: partida.gameId,
+      botId,
+    });
   }
 
   private notificarTodosCartaRobada(partida : Game ){

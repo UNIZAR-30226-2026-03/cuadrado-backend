@@ -131,6 +131,10 @@ export class GameManager {
     return this.getGameById(gameId);
   }
 
+  getActiveGames(): Game[] {
+    return Array.from(this.games.values());
+  }
+
   private getTurnUserId(partida: Game): string {
     return partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
   }

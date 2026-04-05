@@ -45,6 +45,10 @@ export class GameService {
     return this.gameManager.getGameByRoomId(roomId);
   }
 
+  getActiveGames(): Game[] {
+    return this.gameManager.getActiveGames();
+  }
+
   resolverTimeoutsTurnoActivos(): Game[] {
     const partidasAfectadas: Game[] = [];
     const partidasActivas = this.gameManager.getActiveGames();
