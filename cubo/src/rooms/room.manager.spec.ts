@@ -7,7 +7,7 @@ describe('RoomManager', () => {
 
   beforeEach(() => {
     roomManager = new RoomManager({
-      agregarBotsARoom: jest.fn(),
+      agregarBotsARoom: jest.fn(), //no llamo a la real porque es otro modulo
     } as any);
   });
 
