@@ -300,6 +300,7 @@ export class GameService {
   descartarPendiente(partida : Game, userId: string) {
     return this.gameManager.descartarCartaPendiente(partida,userId);
   }
+  
   cartaPorPendiente(partida: Game, numCarta: number, userId: string){
     return this.gameManager.descartarCartaPorPendiente(
       partida, 
@@ -371,6 +372,25 @@ export class GameService {
     numCarta :number,
   ): ResultadoPonerCartaSobreOtra {
     return this.gameManager.ponerCartaSobreOtra(partida, userId, numCarta);
+  }
+
+  prepararIntercabioCarta(
+    partida : Game,
+    userId : string,
+    rivalId : string,
+    numCartaJugador : number
+  ) : boolean {
+    return this.gameManager.
+      prepararIntercambioCarta(partida,userId,rivalId,numCartaJugador);
+  }
+
+  intercambiarCartaInteractivo(
+    partida: Game,
+    userId: string,
+    rivalId: string,
+    numCarta: number,
+  ) : boolean {
+    return this.intercambiarCartaInteractivo(partida,userId,rivalId,numCarta);
   }
 
   calcularRecompensas(partida: Game) {

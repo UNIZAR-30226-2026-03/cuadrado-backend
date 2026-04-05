@@ -89,6 +89,18 @@ interface guardarYCerrarPayload {
   gameId: string;
 }
 
+interface prepararIntercabioCartaPayload {
+  gameId: string,
+  numCartaJugador: number,
+  rivalId: string,
+}
+
+interface intercambiarCartaInteractivo {
+  gameId: string,
+  numCartaJugador: number,
+  rivalId: string,
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -411,11 +423,22 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         payload.gameId,
       );
 
-      const cartaPendiente = this.gameService.descartarPendiente(partida,userId);
+      const resultado = this.gameService.descartarPendiente(partida,userId);
 
       this.finalizarPartidaYSincronizarSala(partida);
-      
-      this.notificarTodosDescartarPendiente(partida,cartaPendiente);
+
+      if(resultado.resultadoHabilidad.tipo === 'roba-y-sigue'){
+        /*implica que el jugador ha robado una carta resultante de la acción
+        de descartar un 6*/
+        this.server.to(client.id).emit('game:carta-robada-por-descartar-6', {
+          gameId: payload.gameId,
+          cartaRobada: resultado.resultadoHabilidad.cartaRobada,
+          reshuffle: resultado.resultadoHabilidad.reshuffle,
+        });
+        this.notificarTodosCartaRobada(partida);
+      }
+
+      this.notificarTodosDescartarPendiente(partida,resultado.cartaDescartada);
       return {
         success: true,
         gameId: partida.gameId,
@@ -805,6 +828,93 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         success: true,
         gameId: payload.gameId,
         //TODO: revisar el payload
+      };
+    } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:preparar-intercambio-carta')
+  prepararIntercambioCarta(
+    @ConnectedSocket() client : Socket,
+    @MessageBody() payload: prepararIntercabioCartaPayload,
+  ){
+    let partida: Game | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      partida = contexto.partida;
+
+      const correcto = this.gameService.prepararIntercabioCarta(
+        partida,
+        contexto.userId,
+        payload.rivalId,
+        payload.numCartaJugador
+      );
+
+      this.finalizarPartidaYSincronizarSala(partida);
+
+      if(correcto){
+        /*se puede notificar al otro jugador para que efectue su parte de la 
+        acción*/
+        this.server.to(payload.rivalId).emit('game:intercambio-rival',{
+          gameId: payload.gameId,
+          usuarioIniciador: contexto.userId,
+        });
+      } 
+
+      return {
+        success: true,
+        gameId: payload.gameId,
+      };
+    } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      this.handleWsError(error);
+    }
+  }
+  
+   @SubscribeMessage('game:preparar-intercambio-carta')
+  intercambiarCartaInteractivo(
+    @ConnectedSocket() client : Socket,
+    @MessageBody() payload: intercambiarCartaInteractivo,
+  ){
+    let partida: Game | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      partida = contexto.partida;
+
+      const correcto = this.gameService.intercambiarCartaInteractivo(
+        partida,
+        contexto.userId,
+        payload.rivalId,
+        payload.numCartaJugador
+      );
+
+      this.finalizarPartidaYSincronizarSala(partida);
+
+      if(correcto){
+        /*se puede notificar al otro jugador para que efectue su parte de la 
+        acción*/
+        this.notificarTodosCambioCartas(partida,payload.rivalId,contexto.userId);
+      }
+
+      return {
+        success: true,
+        gameId: payload.gameId,
       };
     } catch (error) {
       if (this.esErrorSinCartas(error) && partida) {

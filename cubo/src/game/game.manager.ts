@@ -10,12 +10,26 @@ import { Card, PaloCarta } from './interfaces/card.interface';
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const TURN_TIMEOUT_MS = 30_000;
-const EXTRA_TIME_FIRST_TURN = 8000;
 
 interface PermisoHabilidadBase {
   jugadorId: string;
   turno: number;
 }
+
+type ResultadoRegistroHabilidad = 
+  | { tipo: 'sin-efecto-inmediato'; requiereResolverHabilidad: false }
+  | { tipo: 'requiere-skill'; requiereResolverHabilidad: true }
+  | {
+      tipo: 'roba-y-sigue';
+      requiereResolverHabilidad: false;
+      cartaRobada: Card;
+      reshuffle: ReshuffleInfo;
+    };
+
+type ResultadoDescartarPendiente = {
+  cartaDescartada: Card;
+  resultadoHabilidad: ResultadoRegistroHabilidad;
+};
 
 export type TipoPermisoHabilidad =
   | 'ver-carta-propia'
@@ -30,12 +44,19 @@ export type TipoPermisoHabilidad =
 type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia' })
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia-y-rival' })
-  | (PermisoHabilidadBase & { tipo: 'intercambiar-carta' })
+  | (PermisoHabilidadBase & {
+      tipo: 'intercambiar-carta';
+      estado?: 'esperando-iniciador' | 'esperando-rival';
+      rivalId?: string;
+      indiceCartaIniciador?: number;
+    })
   | (PermisoHabilidadBase & { tipo: 'intercambiar-todas' })
   | (PermisoHabilidadBase & { tipo: 'hacer-robar-carta' })
   | (PermisoHabilidadBase & { tipo: 'proteger-carta' })
   | (PermisoHabilidadBase & { tipo: 'saltar-turno-jugador'})
   | (PermisoHabilidadBase & { tipo: 'jugador-menos-puntuacion'});
+
+    
 
 export interface ResultadoVerCarta {
   cartaPropia: Card;
@@ -58,27 +79,10 @@ export interface ResultadoPonerCartaSobreOtra {
   reshuffle: ReshuffleInfo;
 }
 
-export interface PersistedPlayerState {
-  userId: string;
-  turnOrder: number;
-  cards: number[];
-  habilidades: number[];
-}
-
-export interface PersistedGameState {
-  gameId: string;
-  turn: number;
-  habilidadesActivadas: number[];
-  discardedCards: number[];
-  players: PersistedPlayerState[];
-}
-
 export const SIN_CARTAS_ERROR_MESSAGE =
   'No quedan cartas suficientes para continuar la partida';
 export const HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE =
   'La habilidad no tiene efecto porque hay una restriccion activa';
-export const GUARDADO_INVALIDO_ERROR_MESSAGE =
-  'No se puede guardar la partida en este momento';
 
 type AccionTurno =
   | 'DRAW'
@@ -125,10 +129,6 @@ export class GameManager {
     }
 
     return this.getGameById(gameId);
-  }
-
-  getActiveGames(): Game[] {
-    return Array.from(this.games.values()).filter((game) => game.estado === 'activo');
   }
 
   private getTurnUserId(partida: Game): string {
@@ -301,7 +301,7 @@ export class GameManager {
     partida: Game,
     jugadorId: string,
     cartaDescartada: Card,
-  ): boolean {
+  ): ResultadoRegistroHabilidad {
     this.limpiarPermisoHabilidad(partida.gameId);
 
     if (cartaDescartada.carta === 10) {
@@ -310,7 +310,8 @@ export class GameManager {
         tipo: 'ver-carta-propia',
         turno: partida.estadoGlobal.turn,
       });
-      return true;
+      return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+
     }
 
     if (cartaDescartada.carta === 11) {
@@ -319,7 +320,8 @@ export class GameManager {
         tipo: 'ver-carta-propia-y-rival',
         turno: partida.estadoGlobal.turn,
       });
-      return true;
+      return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+
     }
 
     if(cartaDescartada.carta === 2) {
@@ -328,7 +330,8 @@ export class GameManager {
             tipo: 'hacer-robar-carta',
             turno: partida.estadoGlobal.turn,
         });
-        return true;
+        return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+
     }
 
     if(cartaDescartada.carta === 3) {
@@ -337,7 +340,8 @@ export class GameManager {
             tipo: 'proteger-carta',
             turno: partida.estadoGlobal.turn,
         });
-        return true;
+        return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+
     }
 
     if(cartaDescartada.carta === 4) {
@@ -346,24 +350,67 @@ export class GameManager {
             tipo: 'saltar-turno-jugador',
             turno: partida.estadoGlobal.turn,
         });
-        return true;
+        return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+
+    }
+
+     if(cartaDescartada.carta === 6){
+      /*Esta acción se ejecuta directamente sobre el mismo jugador, no hace
+        falta verificar ningún turno por lo que se puede realizar directamente
+        la acción de robar aquí.*/
+
+        const idEnPartida = this.obtenerIndiceJugador(partida,jugadorId);
+        const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+        const reshuffleInfo = this.intentarRebarajarDescartes(partida);
+
+        const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
+
+        if (!cartaRobada) {
+          throw new Error(SIN_CARTAS_ERROR_MESSAGE);
+        }
+
+        estadoJugador.cartasMano[estadoJugador.cartasMano.length] = cartaRobada;
+        
+        reshuffleInfo.cantidadCartasMazo = partida.estadoGlobal.cartasVigentes
+          .length;
+
+        return {
+          tipo: 'roba-y-sigue',
+          requiereResolverHabilidad: false,
+          cartaRobada,
+          reshuffle: reshuffleInfo,
+        };
     }
 
     if(cartaDescartada.carta === 7) {
         const idEnPartida = this.obtenerIndiceJugador(partida, jugadorId);
         partida.estadoGlobal.jugadores[idEnPartida].habilidadesActivadas.push(7);
         partida.updatedAt = new Date();
-        return false;
+        return { tipo: 'sin-efecto-inmediato', requiereResolverHabilidad: false };
+
     }
 
     if(cartaDescartada.carta === 8) {
         const idEnPartida = this.obtenerIndiceJugador(partida, jugadorId);
         partida.estadoGlobal.jugadores[idEnPartida].habilidadesActivadas.push(8);
         partida.updatedAt = new Date();
-        return false;
+        return { tipo: 'sin-efecto-inmediato', requiereResolverHabilidad: false };
     }
 
-    return false;
+    if(cartaDescartada.carta === 9) {
+      this.registrarPermisoHabilidad(partida, {
+        tipo: 'intercambiar-carta',
+        jugadorId,
+        turno: partida.estadoGlobal.turn,
+        estado: 'esperando-iniciador',
+      });
+      
+      return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+
+    }
+    return { tipo: 'sin-efecto-inmediato', requiereResolverHabilidad: false };
+
   }
 
   resolverTimeoutTurno(partida: Game): boolean {
@@ -400,7 +447,7 @@ export class GameManager {
     palo: PaloCarta,
     habilidad = 'ninguna',
     puntos: number,
-    protegida: boolean,
+    protegida : false,
   ): Card {
     return {
       carta,
@@ -438,245 +485,6 @@ export class GameManager {
     }
 
     return baraja;
-  }
-
-  private static encodeCard(card: Card): number {
-    const protectionFlag = card.protegida ? 100 : 0;
-
-    if (card.palo === 'jocker') {
-      return card.carta + protectionFlag;
-    }
-
-    const base = {
-      corazones: 0,
-      picas: 13,
-      treboles: 26,
-      rombos: 39,
-    }[card.palo];
-
-    return base + card.carta + protectionFlag;
-  }
-
-  private static decodeCard(code: number): Card {
-    const protegida = code >= 100;
-    const normalizedCode = protegida ? code - 100 : code;
-
-    if (normalizedCode >= 53 && normalizedCode <= 55) {
-      return GameManager.crearCarta(
-        normalizedCode,
-        'jocker',
-        'ninguna',
-        -1,
-        protegida,
-      );
-    }
-
-    if (normalizedCode < 1 || normalizedCode > 52) {
-      throw new Error('Carta persistida inválida');
-    }
-
-    let palo: PaloCarta;
-    let carta: number;
-
-    if (normalizedCode <= 13) {
-      palo = 'corazones';
-      carta = normalizedCode;
-    } else if (normalizedCode <= 26) {
-      palo = 'picas';
-      carta = normalizedCode - 13;
-    } else if (normalizedCode <= 39) {
-      palo = 'treboles';
-      carta = normalizedCode - 26;
-    } else {
-      palo = 'rombos';
-      carta = normalizedCode - 39;
-    }
-
-    let puntos = 0;
-    if (carta === 13 && (palo === 'corazones' || palo === 'rombos')) {
-      puntos = 0;
-    } else if (carta === 13 && (palo === 'picas' || palo === 'treboles')) {
-      puntos = 20;
-    } else {
-      puntos = carta;
-    }
-
-    return GameManager.crearCarta(carta, palo, 'ninguna', puntos, protegida);
-  }
-
-  private static normalizeEncodedCardForDeck(code: number): number {
-    return code >= 100 ? code - 100 : code;
-  }
-
-  private normalizarEstadoParaGuardado(partida: Game) {
-    let huboCambios = false;
-
-    for (const estadoJugador of partida.estadoGlobal.jugadores) {
-      if (!estadoJugador.cartaPendiente) {
-        continue;
-      }
-
-      partida.estadoGlobal.cartasVigentes.push(estadoJugador.cartaPendiente);
-      estadoJugador.cartaPendiente = undefined;
-      huboCambios = true;
-    }
-
-    if (partida.estadoGlobal.phase !== 'WAIT_DRAW') {
-      partida.estadoGlobal.phase = 'WAIT_DRAW';
-      huboCambios = true;
-    }
-
-    this.actualizarDeadlineTurno(partida);
-
-    if (huboCambios) {
-      partida.updatedAt = new Date();
-    }
-  }
-
-  private validarPersistenciaPermitida(partida: Game) {
-    if (partida.estado !== 'activo') {
-      throw new Error(`${GUARDADO_INVALIDO_ERROR_MESSAGE}: la partida no está activa`);
-    }
-
-    if (partida.estadoGlobal.cuboActivado) {
-      throw new Error(`${GUARDADO_INVALIDO_ERROR_MESSAGE}: no se puede guardar con cubo activo`);
-    }
-
-    if (this.permisosHabilidad.has(partida.gameId)) {
-      throw new Error(`${GUARDADO_INVALIDO_ERROR_MESSAGE}: hay una habilidad pendiente`);
-    }
-
-    const habilidadesSinEfecto = this.countHabilidadesSinEfecto.get(partida.gameId) ?? 0;
-    if (habilidadesSinEfecto > 0) {
-      throw new Error(
-        `${GUARDADO_INVALIDO_ERROR_MESSAGE}: hay efectos de habilidad pendientes`,
-      );
-    }
-  }
-
-  exportarEstadoPersistido(partida: Game): PersistedGameState {
-    this.validarPersistenciaPermitida(partida);
-    this.normalizarEstadoParaGuardado(partida);
-
-    const players = partida.estadoGlobal.turnoJugadores.map((userId, turnOrder) => {
-      const playerState = partida.estadoGlobal.jugadores[turnOrder];
-      return {
-        userId,
-        turnOrder,
-        cards: playerState.cartasMano.map((card) => GameManager.encodeCard(card)),
-        habilidades: [...playerState.habilidadesActivadas],
-      };
-    });
-
-    return {
-      gameId: partida.gameId,
-      turn: partida.estadoGlobal.turn,
-      habilidadesActivadas: [...partida.estadoGlobal.habilidadesActivadas],
-      discardedCards: partida.estadoGlobal.cartasDescartadas.map((card) =>
-        GameManager.encodeCard(card),
-      ),
-      players,
-    };
-  }
-
-  cerrarPartidaActiva(gameId: string): void {
-    const partida = this.getGameById(gameId);
-    this.limpiarEstructurasPartida(partida);
-  }
-
-  private limpiarEstructurasPartida(partida: Game) {
-    this.games.delete(partida.gameId);
-    this.roomToGame.delete(partida.roomId);
-    this.reaccionCarta.delete(partida.gameId);
-    this.reaccionUserId.delete(partida.gameId);
-    this.permisosHabilidad.delete(partida.gameId);
-    this.countHabilidadesSinEfecto.delete(partida.gameId);
-  }
-
-  cargarEstadoPersistido(codigoSala: string, persisted: PersistedGameState): Game {
-    if (this.roomToGame.has(codigoSala)) {
-      throw new Error('Ya existe una partida activa para la sala');
-    }
-
-    const playersOrdered = [...persisted.players].sort(
-      (a, b) => a.turnOrder - b.turnOrder,
-    );
-
-    //antes me ha pasado 
-    if (playersOrdered.length === 0) {
-      throw new Error('No hay jugadores en la partida guardada');
-    }
-
-    const estadoJugadores: PlayerState[] = playersOrdered.map((player) => ({
-      cartasMano: player.cards.map((code) => GameManager.decodeCard(code)),
-      habilidadesActivadas: [...player.habilidades],
-      saltarTurno: false,
-    }));
-
-    const encodedDeck = GameManager.rellenarBaraja().map((card) =>
-      GameManager.encodeCard(card),
-    );
-
-    //Lo hago con las cartas codificadas porque son un entero y supongo que sera mas rapido que con el tipo carta
-    const usedCards = [
-      ...persisted.discardedCards,
-      //Se ha preguntado a chatgpt como sacar la lista de cartas teniendo las cartas separadas en varias componentes de un vector
-      ...playersOrdered.flatMap((player) => player.cards), 
-    ];
-
-    //Se hace asi para detectar inchoerencias como cartas invalidas o duplicadas
-    for (const usedCard of usedCards) {
-      const idx = encodedDeck.indexOf(
-        GameManager.normalizeEncodedCardForDeck(usedCard),
-      );
-      if (idx === -1) {
-        throw new Error('La partida guardada contiene cartas inválidas');
-      }
-      encodedDeck.splice(idx, 1);
-    }
-
-    const cartasVigentes = GameManager.mezclarArray(encodedDeck).map((code) =>
-      GameManager.decodeCard(code),
-    );
-
-    if (persisted.turn < 0 || persisted.turn >= playersOrdered.length) {
-      throw new Error('Turno persistido inválido');
-    }
-
-    const turn = persisted.turn;
-
-    const estadoGlobal: GameState = {
-      turn,
-      phase: 'WAIT_DRAW',
-      turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + EXTRA_TIME_FIRST_TURN,
-      cuboActivado: false,
-      cuboTurnosRestantes: undefined,
-      cuboSolicitanteId: null,
-      cartasVigentes,
-      cartasDescartadas: persisted.discardedCards.map((code) =>
-        GameManager.decodeCard(code),
-      ),
-      habilidadesActivadas: [...persisted.habilidadesActivadas],
-      turnoJugadores: playersOrdered.map((player) => player.userId),
-      jugadores: estadoJugadores,
-    };
-
-    const partida: Game = {
-      gameId: persisted.gameId,
-      roomId: codigoSala,
-      estado: 'activo',
-      estadoGlobal,
-      updatedAt: new Date(),
-    };
-
-    this.games.set(partida.gameId, partida);
-    this.roomToGame.set(codigoSala, partida.gameId);
-    this.reaccionCarta.set(partida.gameId, true);
-    this.reaccionUserId.delete(partida.gameId);
-    this.permisosHabilidad.delete(partida.gameId);
-    this.countHabilidadesSinEfecto.set(partida.gameId, 0);
-
-    return partida;
   }
 
   private static mezclarArray<T>(array: T[]): T[] {
@@ -826,7 +634,7 @@ export class GameManager {
     const estadoGlobal: GameState = {
       turn: 0,
       phase: 'WAIT_DRAW',
-      turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + EXTRA_TIME_FIRST_TURN, // se le da un tiempo extra en el primer turno
+      turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + 8000, // se le da un tiempo extra en el primer turno
       cuboActivado: false,
       cuboTurnosRestantes: undefined,
       cuboSolicitanteId: null,
@@ -908,7 +716,8 @@ export class GameManager {
     }
   }
 
-  descartarCartaPendiente(partida: Game, userId: string): Card {
+  descartarCartaPendiente(partida: Game, userId: string)
+    : ResultadoDescartarPendiente {
     this.validarAccionTurno(partida, userId, 'RESOLVE_PENDING');
 
     const idEnPartida = this.obtenerIndiceJugador(partida, userId);
@@ -926,15 +735,24 @@ export class GameManager {
       cartaPendiente,
     );
 
+    let cartaRobada;
+    
     this.abrirVentanaReaccionGlobal(partida);
+    
+    if(requiereResolverHabilidad.tipo === 'roba-y-sigue'){
+      cartaRobada = requiereResolverHabilidad.cartaRobada;
+    }
 
-    if (requiereResolverHabilidad) {
+    if (requiereResolverHabilidad.requiereResolverHabilidad) {
       this.cambiarFase(partida, 'WAIT_SKILL');
     } else {
       this.avanzarTurno(partida);
     }
 
-    return cartaPendiente;
+    return {
+      cartaDescartada: cartaPendiente,
+      resultadoHabilidad: requiereResolverHabilidad,
+    };
   }
 
   descartarCartaPorPendiente(
@@ -1188,7 +1006,11 @@ export class GameManager {
     partida.estadoGlobal.cuboTurnosRestantes = undefined;
     partida.estado = 'terminado';
     partida.updatedAt = new Date();
-    this.limpiarEstructurasPartida(partida);
+    this.roomToGame.delete(partida.roomId);
+    this.reaccionCarta.delete(partida.gameId);
+    this.reaccionUserId.delete(partida.gameId);
+    this.permisosHabilidad.delete(partida.gameId);
+    this.countHabilidadesSinEfecto.delete(partida.gameId);
   }
 
   private validarFinPartidaPorSinCartas(partida: Game, userId: string): boolean {
@@ -1311,6 +1133,7 @@ export class GameManager {
     reshuffleInfo.cantidadCartasMazo = partida.estadoGlobal.cartasVigentes.length;
 
     this.limpiarPermisoHabilidad(partida.gameId);
+    this.avanzarTurno(partida);
     return {
       cartaRobada,
       reshuffle: reshuffleInfo,
@@ -1334,7 +1157,10 @@ export class GameManager {
     const carta = this.obtenerCartaDeJugador(partida, userId, numCarta);
     carta.protegida = true;
     partida.updatedAt = new Date();
+    
     this.limpiarPermisoHabilidad(partida.gameId);
+
+    this.avanzarTurno(partida);
 
     return true;
   }
@@ -1360,6 +1186,8 @@ export class GameManager {
 
     this.limpiarPermisoHabilidad(partida.gameId);
     
+    this.avanzarTurno(partida);
+
     return true;
   }
     
@@ -1431,6 +1259,73 @@ export class GameManager {
     return true;
   }
 
+  prepararIntercambioCarta(
+    partida: Game, 
+    userId: string,
+    rivalId: string,
+    numCartaJugador : number
+  ) : boolean {
+    this.validarAccionTurno(partida,userId,'RESOLVE_SKILL');
+
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, userId, [
+        'intercambiar-carta'
+    ]);
+
+    if(permiso.tipo !== 'intercambiar-carta' 
+        || permiso.estado !== 'esperando-iniciador'){
+      throw new  Error('No es el turno para realizar esta acción.')
+    }
+
+    permiso.indiceCartaIniciador = numCartaJugador;
+    permiso.rivalId = rivalId;
+    permiso.estado = 'esperando-rival';
+
+    return true;
+
+  }
+
+  intercambiarCartaInteractivo(
+    partida: Game,
+    userId: string,
+    rivalId: string,
+    numCarta: number,
+  ) : boolean {
+
+    this.validarAccionTurno(partida,userId,'RESOLVE_SKILL');
+
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, rivalId, [
+        'intercambiar-carta'
+    ]);
+
+    if(permiso.jugadorId !== rivalId || permiso.tipo !== 'intercambiar-carta'
+    || permiso.turno != partida.estadoGlobal.turn || permiso.rivalId !== userId){
+      throw new Error('Ha habido un error inesperado que provoca que la acción \
+        sea inválida');
+    }
+
+    const idEnPartidaIniciador = this.obtenerIndiceJugador(partida,permiso.jugadorId);
+    const idEnPartidaRival = this.obtenerIndiceJugador(partida,userId);
+
+    const cartasManoIniciador = partida.estadoGlobal.
+      jugadores[idEnPartidaIniciador].cartasMano
+    const cartasManoRival = partida.estadoGlobal.
+      jugadores[idEnPartidaRival].cartasMano
+
+    if(!permiso.indiceCartaIniciador){
+      throw new Error('El jugador que ha iniciado la acción tiene que haber \
+        seleccionado la carta que quiere intercambiar');
+    }
+
+    const cartaIniciador = cartasManoIniciador[permiso.indiceCartaIniciador];
+    cartasManoIniciador[permiso.indiceCartaIniciador] = cartasManoRival[numCarta];
+    cartasManoRival[numCarta] = cartaIniciador;
+
+    this.limpiarPermisoHabilidad(partida.gameId);
+    //TODO: aquí hay que cambiar el estado?
+    this.avanzarTurno(partida);
+    
+    return true;
+  }
   // ----------------------------------------------------------
   // CÁLCULO DE RECOMPENSAS (ELO Y CUBITOS)
   // ----------------------------------------------------------
