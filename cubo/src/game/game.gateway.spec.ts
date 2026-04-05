@@ -294,7 +294,12 @@ describe('GameGateway', () => {
     };
 
     gameService.validateGameContext.mockReturnValue(createGameContext(game));
-    gameService.descartarPendiente.mockReturnValue(carta);
+    gameService.descartarPendiente.mockReturnValue({
+      cartaDescartada: carta,
+      resultadoHabilidad: {
+        tipo: 'ninguna',
+      },
+    } as any);
 
     const result = gateway.descartarPendiente(client as Socket, { gameId: 'G1' });
 

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Patch, Param, UseGuards, Request } from '@nestjs/common';
 import { SkinsService } from './skins.service';
-import { JwtGuard } from 'src/auth/guards/jwt.guard';
+import { JwtGuard } from '../auth/guards/jwt.guard';
 
 @Controller('skins')
 export class SkinsController {

@@ -6,7 +6,9 @@ describe('RoomManager', () => {
   let roomManager: RoomManager;
 
   beforeEach(() => {
-    roomManager = new RoomManager();
+    roomManager = new RoomManager({
+      agregarBotsARoom: jest.fn(),
+    } as any);
   });
 
   it('returns only public rooms that have not started', () => {
