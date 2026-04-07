@@ -1,10 +1,11 @@
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import { INestApplicationContext } from '@nestjs/common';
 import { Server, ServerOptions } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 
 export class WebSocketAdapter extends IoAdapter {
-  constructor(private jwtService: JwtService) {
-    super();
+  constructor(app: INestApplicationContext, private jwtService: JwtService) {
+    super(app);
   }
 
   createIOServer(port: number, options?: ServerOptions): Server {

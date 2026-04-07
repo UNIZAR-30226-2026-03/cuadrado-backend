@@ -19,7 +19,7 @@ async function bootstrap() {
 
   // Registrar adaptador WebSocket con validación JWT
   const jwtService = app.get(JwtService);
-  app.useWebSocketAdapter(new WebSocketAdapter(jwtService));
+  app.useWebSocketAdapter(new WebSocketAdapter(app, jwtService));
 
   // ValidationPipe global: valida DTOs y rechaza datos inválidos (Valida todos )
   // whitelist: true -> elimina campos no permitidos en los DTOs
