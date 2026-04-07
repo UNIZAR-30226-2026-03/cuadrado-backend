@@ -346,6 +346,15 @@ export class GameManager {
 
     }
 
+    if(cartaDescartada.carta === 1) {
+        this.registrarPermisoHabilidad(partida, {
+          jugadorId,
+          tipo: 'intercambiar-todas',
+          turno: partida.estadoGlobal.turn,
+        });
+        return{tipo: 'requiere-skill', requiereResolverHabilidad: true};
+    }
+
     if(cartaDescartada.carta === 2) {
         this.registrarPermisoHabilidad(partida,{
             jugadorId,
@@ -1055,6 +1064,7 @@ export class GameManager {
     numCartaRemitente: number,
     numCartaDestinatario: number,
   ) {
+    
     this.validarAccionTurno(partida, remitenteId, 'OWNER_TURN_ONLY');
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
@@ -1154,7 +1164,15 @@ export class GameManager {
   }
 
   intercambiarTodasCartas(partida: Game, remitenteId: string, destinatarioId: string) {
-    this.validarAccionTurno(partida, remitenteId, 'OWNER_TURN_ONLY');
+    this.validarAccionTurno(partida, remitenteId, 'WAIT_SKILL');
+
+    const permiso = this.obtenerPermisoHabilidadActiva(partida, remitenteId, 
+      ['intercambiar-todas']
+    );
+
+    if(!permiso){
+      throw new Error('El jugador no tiene permiso para realizar esta acción');
+    }
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
     const idEnPartidaD = this.obtenerIndiceJugador(partida, destinatarioId);
@@ -1181,6 +1199,9 @@ export class GameManager {
     ];
 
     partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano = cartasRemitente;
+
+    this.limpiarPermisoHabilidad(partida.gameId);
+    
   }
 
   calcularPuntosJugador(partida: Game, userId: string): number {
@@ -1548,13 +1569,14 @@ export class GameManager {
     numCarta: number,
   ) : boolean {
 
+    
     this.validarAccionTurno(partida,userId,'RESOLVE_SKILL');
 
     const permiso = this.obtenerPermisoHabilidadActiva(partida, rivalId, [
         'intercambiar-carta'
     ]);
 
-    if(permiso.jugadorId !== rivalId || permiso.tipo !== 'intercambiar-carta'
+    if(permiso.jugadorId !== userId || permiso.tipo !== 'intercambiar-carta'
     || permiso.turno != partida.estadoGlobal.turn || permiso.rivalId !== userId){
       throw new Error('Ha habido un error inesperado que provoca que la acción \
         sea inválida');
@@ -1568,7 +1590,7 @@ export class GameManager {
     const cartasManoRival = partida.estadoGlobal.
       jugadores[idEnPartidaRival].cartasMano
 
-    if(!permiso.indiceCartaIniciador){
+    if(permiso.indiceCartaIniciador == null){
       throw new Error('El jugador que ha iniciado la acción tiene que haber \
         seleccionado la carta que quiere intercambiar');
     }

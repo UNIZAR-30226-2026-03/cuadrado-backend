@@ -1,0 +1,201 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1240" viewBox="0 0 1600 1240" role="img" aria-labelledby="title desc">
+  <title id="title">Maquina de estados de gestion de turnos</title>
+  <desc id="desc">Diagrama legible de la fase principal del turno, la ventana de reaccion y los estados paralelos usados por game.manager.ts</desc>
+  <defs>
+    <style>
+      .bg { fill: #f4f0e8; }
+      .panel { fill: #fffaf2; stroke: #3a2f22; stroke-width: 2; }
+      .state { fill: #ffffff; stroke: #1f4e5f; stroke-width: 3; }
+      .state-alt { fill: #fef3d6; stroke: #8b5e00; stroke-width: 3; }
+      .state-end { fill: #f8d7d9; stroke: #8a1f2d; stroke-width: 3; }
+      .substate { fill: #eef7fb; stroke: #2a657b; stroke-width: 2.5; }
+      .note { fill: #f8f6ff; stroke: #5e4e99; stroke-width: 2; }
+      .warn { fill: #fff0ec; stroke: #a74422; stroke-width: 2; }
+      .callout { fill: #fffdf8; stroke: #8a7b65; stroke-width: 1.8; }
+      .title { font: 700 32px 'DejaVu Sans', Arial, sans-serif; fill: #241b13; }
+      .subtitle { font: 700 18px 'DejaVu Sans', Arial, sans-serif; fill: #241b13; }
+      .state-title { font: 700 17px 'DejaVu Sans', Arial, sans-serif; fill: #203847; text-anchor: middle; }
+      .body { font: 400 15px 'DejaVu Sans', Arial, sans-serif; fill: #1f1f1f; }
+      .body-center { font: 400 15px 'DejaVu Sans', Arial, sans-serif; fill: #1f1f1f; text-anchor: middle; }
+      .small { font: 400 16px 'DejaVu Sans', Arial, sans-serif; fill: #3d342d; }
+      .code { font: 600 14px 'DejaVu Sans Mono', 'Courier New', monospace; fill: #1f1f1f; }
+      .code-center { font: 600 14px 'DejaVu Sans Mono', 'Courier New', monospace; fill: #1f1f1f; text-anchor: middle; }
+      .caption { font: 400 13px 'DejaVu Sans', Arial, sans-serif; fill: #3d342d; }
+      .caption-center { font: 400 13px 'DejaVu Sans', Arial, sans-serif; fill: #3d342d; text-anchor: middle; }
+      .arrow { stroke: #2c2c2c; stroke-width: 3; fill: none; marker-end: url(#arrowhead); stroke-linecap: round; stroke-linejoin: round; }
+      .dashed { stroke-dasharray: 8 8; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0,0 10,4 0,8" fill="#2c2c2c"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="1240"/>
+
+  <text class="title" x="60" y="66">Gestion de turnos en src/game/game.manager.ts</text>
+  <text class="small" x="60" y="98">La phase visible solo modela el flujo principal. La maquina real depende ademas de permisos de habilidad, reaccion a descartes y contador del cubo.</text>
+
+  <rect class="panel" x="60" y="130" width="960" height="720" rx="22" ry="22"/>
+  <text class="subtitle" x="88" y="168">1. Fase principal del turno (estadoGlobal.phase)</text>
+
+  <rect class="callout" x="176" y="178" width="360" height="62" rx="12" ry="12"/>
+  <text class="code-center" x="356" y="204">
+    <tspan x="356" dy="0">descartarCartaPorPendiente()</tspan>
+    <tspan x="356" dy="20">o descartarCartaPendiente() sin skill</tspan>
+  </text>
+
+  <rect class="callout" x="696" y="178" width="248" height="62" rx="12" ry="12"/>
+  <text class="code-center" x="820" y="204">
+    <tspan x="820" dy="0">timeout en skill</tspan>
+    <tspan x="820" dy="20">limpia permiso y avanza turno</tspan>
+  </text>
+
+  <rect class="state" x="110" y="280" width="220" height="120" rx="18" ry="18"/>
+  <text class="state-title" x="220" y="320">WAIT_DRAW</text>
+  <text class="body-center" x="220" y="348">
+    <tspan x="220" dy="0">Inicio de turno.</tspan>
+    <tspan x="220" dy="22">Roba o usa una skill</tspan>
+    <tspan x="220" dy="22">almacenada.</tspan>
+  </text>
+
+  <rect class="state" x="410" y="280" width="220" height="120" rx="18" ry="18"/>
+  <text class="state-title" x="520" y="320">WAIT_DECISION</text>
+  <text class="body-center" x="520" y="348">
+    <tspan x="520" dy="0">Hay cartaPendiente.</tspan>
+    <tspan x="520" dy="22">Debe descartarse</tspan>
+    <tspan x="520" dy="22">o sustituir la mano.</tspan>
+  </text>
+
+  <rect class="state-alt" x="710" y="280" width="220" height="120" rx="18" ry="18"/>
+  <text class="state-title" x="820" y="320">WAIT_SKILL</text>
+  <text class="body-center" x="820" y="348">
+    <tspan x="820" dy="0">Existe permisoHabilidad</tspan>
+    <tspan x="820" dy="22">pendiente para resolver</tspan>
+    <tspan x="820" dy="22">la accion.</tspan>
+  </text>
+
+  <rect class="callout" x="340" y="228" width="150" height="38" rx="12" ry="12"/>
+  <text class="code-center" x="415" y="252">robarCarta()</text>
+
+  <rect class="callout" x="586" y="214" width="316" height="56" rx="12" ry="12"/>
+  <text class="code-center" x="744" y="238">
+    <tspan x="744" dy="0">descartarCartaPendiente()</tspan>
+    <tspan class="caption-center" x="744" dy="18">si la carta exige habilidad</tspan>
+  </text>
+
+  <path class="arrow" d="M330 340 H410"/>
+  <path class="arrow" d="M630 340 H710"/>
+  <path class="arrow dashed" d="M520 280 V240 H220 V280"/>
+  <path class="arrow dashed" d="M820 280 V240"/>
+
+  <rect class="callout" x="112" y="438" width="294" height="62" rx="12" ry="12"/>
+  <text class="code-center" x="259" y="462">
+    <tspan x="259" dy="0">timeout en decision</tspan>
+    <tspan class="caption-center" x="259" dy="18">descarta pendiente y avanza turno</tspan>
+  </text>
+
+  <rect class="callout" x="638" y="430" width="292" height="104" rx="12" ry="12"/>
+  <text class="code-center" x="784" y="454">
+    <tspan x="784" dy="0">skill resuelta -&gt; avanzarTurno()</tspan>
+    <tspan class="caption-center" x="784" dy="18">verCarta / hacerRobarCarta</tspan>
+    <tspan class="caption-center" x="784" dy="18">protegerCarta / saltarTurnoJugador</tspan>
+    <tspan class="caption-center" x="784" dy="18">intercambiarCartaInteractivo</tspan>
+  </text>
+
+  <rect class="state-end" x="410" y="580" width="220" height="120" rx="18" ry="18"/>
+  <text class="state-title" x="520" y="620">TERMINADO</text>
+  <text class="body-center" x="520" y="648">
+    <tspan x="520" dy="0">finalizarPartida()</tspan>
+  </text>
+
+  <rect class="callout" x="654" y="600" width="270" height="64" rx="12" ry="12"/>
+  <text class="code-center" x="789" y="624">
+    <tspan x="789" dy="0">fin por cubo</tspan>
+    <tspan class="caption-center" x="789" dy="18">sinCartasMazo / unJugadorSinCartas</tspan>
+  </text>
+
+  <path class="arrow dashed" d="M520 400 V470 H200 V400"/>
+  <path class="arrow" d="M820 400 V540 H250 V400"/>
+  <path class="arrow dashed" d="M520 400 V580"/>
+
+  <rect class="note" x="110" y="730" width="820" height="82" rx="16" ry="16"/>
+  <text class="code" x="134" y="758">Skills almacenadas fuera de phase:</text>
+  <text class="body" x="134" y="784">jugadorMenosPuntuacion() y desactivarProximaHabilidad() solo pueden ejecutarse en WAIT_DRAW.</text>
+  <text class="body" x="134" y="806">No cambian phase, pero alteran el siguiente efecto o consultan informacion.</text>
+
+  <rect class="panel" x="1060" y="130" width="480" height="380" rx="22" ry="22"/>
+  <text class="subtitle" x="1088" y="168">2. Ventana de reaccion global</text>
+
+  <rect class="callout" x="1096" y="178" width="218" height="46" rx="12" ry="12"/>
+  <text class="code-center" x="1205" y="198">
+    <tspan x="1205" dy="0">primer intento</tspan>
+    <tspan class="caption-center" x="1205" dy="18">solicitarColocarCartaSobreOtra()</tspan>
+  </text>
+
+  <rect class="substate" x="1100" y="228" width="170" height="92" rx="16" ry="16"/>
+  <text class="state-title" x="1185" y="260">ABIERTA</text>
+  <text class="body-center" x="1185" y="286">
+    <tspan x="1185" dy="0">reaccionCarta = true</tspan>
+  </text>
+
+  <rect class="substate" x="1310" y="228" width="180" height="92" rx="16" ry="16"/>
+  <text class="state-title" x="1400" y="260">BLOQUEADA</text>
+  <text class="body-center" x="1400" y="286">
+    <tspan x="1400" dy="0">reaccionCarta = false</tspan>
+    <tspan x="1400" dy="20">reaccionUserId = X</tspan>
+  </text>
+
+  <path class="arrow" d="M1270 274 H1310"/>
+
+  <rect class="callout" x="1326" y="170" width="164" height="54" rx="12" ry="12"/>
+  <text class="code-center" x="1408" y="190">
+    <tspan x="1408" dy="0">acierto</tspan>
+    <tspan class="caption-center" x="1408" dy="18">sigue bloqueada</tspan>
+    <tspan class="caption-center" x="1408" dy="16">y encadena intentos</tspan>
+  </text>
+
+  <path class="arrow dashed" d="M1400 228 V226"/>
+
+  <rect class="callout" x="1110" y="386" width="348" height="62" rx="12" ry="12"/>
+  <text class="code-center" x="1284" y="410">
+    <tspan x="1284" dy="0">fallo en ponerCartaSobreOtra()</tspan>
+    <tspan class="caption-center" x="1284" dy="18">roba y reabre la ventana</tspan>
+  </text>
+
+  <path class="arrow" d="M1400 320 V384 H1185 V320"/>
+
+  <rect class="note" x="1100" y="458" width="390" height="68" rx="16" ry="16"/>
+  <text class="body" x="1124" y="486">La reaccion no depende de phase.</text>
+  <text class="body" x="1124" y="508">Es una maquina paralela separada del turno.</text>
+
+  <rect class="panel" x="60" y="880" width="720" height="320" rx="22" ry="22"/>
+  <text class="subtitle" x="88" y="918">3. Estado oculto paralelo que modifica el flujo</text>
+
+  <rect class="note" x="92" y="946" width="656" height="78" rx="16" ry="16"/>
+  <text class="code" x="116" y="972">permisosHabilidad[gameId]</text>
+  <text class="body" x="116" y="996">Define que accion concreta valida WAIT_SKILL y para quien.</text>
+  <text class="body" x="116" y="1018">Tambien incluye el paso de carta 9: esperando-iniciador -&gt; esperando-rival.</text>
+
+  <rect class="note" x="92" y="1038" width="656" height="66" rx="16" ry="16"/>
+  <text class="code" x="116" y="1064">countHabilidadesSinEfecto[gameId]</text>
+  <text class="body" x="116" y="1088">Cancela la siguiente habilidad inmediata o almacenada sin cambiar phase por si sola.</text>
+
+  <rect class="note" x="92" y="1118" width="656" height="66" rx="16" ry="16"/>
+  <text class="code" x="116" y="1144">cuboActivado + cuboTurnosRestantes</text>
+  <text class="body" x="116" y="1168">Cada avanzarTurno() decrementa el contador; al llegar a 0 termina la partida.</text>
+
+  <rect class="panel" x="820" y="880" width="720" height="320" rx="22" ry="22"/>
+  <text class="subtitle" x="848" y="918">4. Puntos fragiles detectados</text>
+
+  <rect class="warn" x="852" y="946" width="656" height="74" rx="16" ry="16"/>
+  <text class="body" x="876" y="973">La carta 9 depende de WAIT_SKILL, pero el segundo paso lo hace el rival.</text>
+  <text class="body" x="876" y="995">Con validarAccionTurno() actual, el rival no puede completar el intercambio.</text>
+
+  <rect class="warn" x="852" y="1034" width="656" height="74" rx="16" ry="16"/>
+  <text class="body" x="876" y="1061">phase no modela la reaccion de descarte ni la negacion de habilidades.</text>
+  <text class="body" x="876" y="1083">La maquina real esta repartida entre varios mapas auxiliares.</text>
+
+  <rect class="warn" x="852" y="1122" width="656" height="62" rx="16" ry="16"/>
+  <text class="body" x="876" y="1149">Hay tipos de permiso definidos pero no conectados al flujo:</text>
+  <text class="body" x="876" y="1171">intercambiar-todas y jugador-menos-puntuacion.</text>
+</svg>
