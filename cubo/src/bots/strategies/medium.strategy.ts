@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BotManager } from '../bot.manager';
 import { Game } from '../../game/interfaces/game.interface';
 import { BotAction } from '../interfaces/bot-action.interface';
+import { PermisoHabilidad } from '../../game/game.manager';
 
 /**
  * Estrategia MEDIUM: IA que analiza su situación con información imperfecta
@@ -10,18 +11,26 @@ import { BotAction } from '../interfaces/bot-action.interface';
  */
 @Injectable()
 export class MediumBotStrategy extends BotManager {
-  decidir(partida: Game, botId: string): BotAction {
+  decidir(
+    partida: Game,
+    botId: string,
+    contexto: PermisoHabilidad | null,
+  ): BotAction {
     const phase = partida.estadoGlobal.phase;
+    const estado = this.obtenerEstadoBot(partida, botId);
 
     switch (phase) {
       case 'WAIT_DRAW':
+        if (estado.habilidadesActivadas.includes(7)) {
+          return { accion: 'jugador-menos-puntuacion' };
+        }
         return { accion: 'robar' };
 
       case 'WAIT_DECISION':
         return this.decidirConPendiente(partida, botId);
 
       case 'WAIT_SKILL':
-        return this.ejecutarHabilidad(partida, botId);
+        return this.ejecutarHabilidad(partida, botId, contexto);
 
       default:
         return { accion: 'esperar' };
@@ -30,72 +39,162 @@ export class MediumBotStrategy extends BotManager {
 
   /**
    * Decide sin ver cartas de otros (información imperfecta)
-   * Solo observa: composición propia, número de jugadores, fase del juego
+   * Solo observa: composición propia y carta pendiente
    */
   private decidirConPendiente(partida: Game, botId: string): BotAction {
     const estado = this.obtenerEstadoBot(partida, botId);
     const pendiente = estado.cartaPendiente;
     const mano = estado.cartasMano;
 
-    if (!pendiente || !mano) {
+    if (!pendiente || !mano.length) {
       return { accion: 'descartar-pendiente' };
     }
 
-    // Análisis 1: Evaluación de la carta pendiente
-    const esPendienteAlta = pendiente.puntos > 8; // Cartas 9+ son problemáticas
-    const esPendienteBaja = pendiente.puntos <= 4;
+    const esPendienteAlta = pendiente.puntos > 7;
 
-    // Análisis 2: Composición de mano
-    const misPuntos = this.evaluarPuntosCartasMano(mano);
-    const cartasAltas = mano.filter(c => c.puntos > 8);
-    const tengoMuchosAltos = cartasAltas.length >= 3;
-
-    // Análisis 3: Contexto del juego
-    const numJugadores = this.contarJugadores(partida);
-    const mazosRestantes = partida.estadoGlobal.cartasVigentes.length;
-    const esTempranoEnPartida = mazosRestantes > 30;
-
-    // ESTRATEGIA MEDIUM:
-    // Regla 1: Si pendiente es alta Y tengo cartas altas → DESCARTA (reduce puntos)
-    if (esPendienteAlta && tengoMuchosAltos) {
+    if (esPendienteAlta) {
       return { accion: 'descartar-pendiente' };
     }
 
-    // Regla 2: Si pendiente es baja → INTENTA INTERCAMBIAR (mejora mano)
-    if (esPendienteBaja) {
-      const cartaMasBaja = this.cartaMasBaja(mano);
-      if (cartaMasBaja) {
-        const indexBaja = this.obtenerIndiceCarta(estado, cartaMasBaja);
-        return { accion: 'carta-por-pendiente', cartaIndex: indexBaja };
-      }
-    }
-
-    // Regla 3: Contexto early/late game
-    if (esTempranoEnPartida) {
-      // Al inicio: sé más conservador (70% descarta)
-      if (this.decisonAleatoria(0.7)) {
-        return { accion: 'descartar-pendiente' };
-      }
-    } else {
-      // Al final: sé más agresivo (más probabilidad intercambiar)
-      if (this.decisonAleatoria(0.4)) {
-        return { accion: 'descartar-pendiente' };
-      }
-    }
-
-    // Regla 4: Si nada de lo anterior → analiza puntos totales
-    // Si tengo muchos puntos → intenta descartar cartas
-    if (misPuntos > 20) {
-      return { accion: 'descartar-pendiente' };
-    }
-
-    return { accion: 'descartar-pendiente' };
+    const indice = Math.floor(Math.random() * mano.length);
+    return { accion: 'carta-por-pendiente', cartaIndex: indice };
   }
 
   /**
-   * Ejecuta habilidades
+   * Ejecuta habilidades con decisiones simples y aleatorias.
    */
-  private ejecutarHabilidad(partida: Game, botId: string): BotAction {
-    return { accion: 'esperar' };
+  private ejecutarHabilidad(
+    partida: Game,
+    botId: string,
+    permiso: PermisoHabilidad | null,
+  ): BotAction {
+    if (!permiso) {
+      return { accion: 'esperar' };
+    }
+
+    switch (permiso.tipo) {
+      case 'ver-carta-propia': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const numeroCartasMano =
+          partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+        const indice = Math.floor(Math.random() * numeroCartasMano);
+        return { accion: 'ver-carta', cartaIndex: indice };
+      }
+
+      case 'ver-carta-propia-y-rival': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) {
+          return { accion: 'esperar' };
+        }
+
+        const numCartasJugador =
+          partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+        const cartaIndex = Math.floor(Math.random() * numCartasJugador);
+        const rivalId = partida.estadoGlobal.turnoJugadores[rivalNum];
+        const numCartasRival =
+          partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
+        const cartaIndexRival = Math.floor(Math.random() * numCartasRival);
+
+        return {
+          accion: 'ver-carta-propia-y-rival',
+          cartaIndex,
+          targetUserId: rivalId,
+          cartaIndexTarget: cartaIndexRival,
+        };
+      }
+
+      case 'intercambiar-carta': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) {
+          return { accion: 'esperar' };
+        }
+
+        const numCartasJugador =
+          partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+        const cartaCambiar = Math.floor(Math.random() * numCartasJugador);
+        const rivalId = partida.estadoGlobal.turnoJugadores[rivalNum];
+        const numCartasRival =
+          partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
+        const cartaRival = Math.floor(Math.random() * numCartasRival);
+
+        return {
+          accion: 'intercambiar-carta',
+          cartaIndex: cartaCambiar,
+          targetUserId: rivalId,
+          cartaIndexTarget: cartaRival,
+        };
+      }
+
+      case 'intercambiar-todas': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) {
+          return { accion: 'esperar' };
+        }
+
+        return {
+          accion: 'intercambiar-todas-cartas',
+          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+        };
+      }
+
+      case 'hacer-robar-carta': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) {
+          return { accion: 'esperar' };
+        }
+
+        return {
+          accion: 'hacer-robar-carta',
+          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+        };
+      }
+
+      case 'proteger-carta': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const numeroCartasMano =
+          partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+        const cartaIndex = Math.floor(Math.random() * numeroCartasMano);
+        return { accion: 'proteger-carta', cartaIndex };
+      }
+
+      case 'saltar-turno-jugador': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) {
+          return { accion: 'esperar' };
+        }
+
+        return {
+          accion: 'saltar-turno-jugador',
+          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+        };
+      }
+
+      case 'jugador-menos-puntuacion':
+        return { accion: 'jugador-menos-puntuacion' };
+
+      default:
+        return { accion: 'esperar' };
+    }
+  }
+
+  private obtenerIndiceRivalAleatorio(
+    partida: Game,
+    idEnPartida: number,
+  ): number | null {
+    const indicesRivales = partida.estadoGlobal.turnoJugadores
+      .map((_, index) => index)
+      .filter((index) => index !== idEnPartida);
+
+    if (indicesRivales.length === 0) {
+      return null;
+    }
+
+    const rivalPosicion = Math.floor(Math.random() * indicesRivales.length);
+    return indicesRivales[rivalPosicion];
   }
 }

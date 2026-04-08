@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BotManager } from '../bot.manager';
 import { Game } from '../../game/interfaces/game.interface';
 import { BotAction } from '../interfaces/bot-action.interface';
+import { PermisoHabilidad } from '../../game/game.manager';
 
 /**
  * Estrategia HARD: IA avanzada con análisis de contexto
@@ -11,7 +12,11 @@ import { BotAction } from '../interfaces/bot-action.interface';
  */
 @Injectable()
 export class HardBotStrategy extends BotManager {
-  decidir(partida: Game, botId: string): BotAction {
+  decidir(
+    partida: Game,
+    botId: string,
+    _contexto: PermisoHabilidad | null,
+  ): BotAction {
     const phase = partida.estadoGlobal.phase;
 
     switch (phase) {

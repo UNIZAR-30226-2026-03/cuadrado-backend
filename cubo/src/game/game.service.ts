@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   GameManager,
   PersistedGameState,
+  PermisoHabilidad,
   ResultadoPonerCartaSobreOtra,
   ResultadoRobarCarta,
 } from './game.manager';
@@ -47,6 +48,10 @@ export class GameService {
 
   getActiveGames(): Game[] {
     return this.gameManager.getActiveGames();
+  }
+
+  getBotDecisionContext(gameId: string, botId: string): PermisoHabilidad | null {
+    return this.gameManager.getBotDecisionContext(gameId, botId);
   }
 
   resolverTimeoutsTurnoActivos(): Game[] {
@@ -321,6 +326,22 @@ export class GameService {
       );
   }
 
+  intercambiarCartaBot(
+    partida: Game,
+    remitenteId: string,
+    destinatarioId: string,
+    numCartaRemitente: number,
+    numCartaDestinatario: number,
+  ) {
+    return this.gameManager.intercambiarCartaBot(
+      partida,
+      remitenteId,
+      destinatarioId,
+      numCartaRemitente,
+      numCartaDestinatario,
+    );
+  }
+
   verCarta(partida: Game, solicitanteId : string, indexCarta: number, playerId?: string
     ,indexCartaPlayer?: number
   ){
@@ -339,6 +360,10 @@ export class GameService {
 
   protegerCarta(partida : Game, userId: string, numCarta : number) {
     this.gameManager.protegerCarta(partida,userId,numCarta);
+  }
+
+  saltarTurnoJugador(partida: Game, userId: string, adversarioId: string) {
+    return this.gameManager.saltarTurnoJugador(partida, userId, adversarioId);
   }
 
   jugadorMenosPuntuacion(partida: Game, userId: string) {
@@ -394,7 +419,12 @@ export class GameService {
     rivalId: string,
     numCarta: number,
   ) : boolean {
-    return this.intercambiarCartaInteractivo(partida,userId,rivalId,numCarta);
+    return this.gameManager.intercambiarCartaInteractivo(
+      partida,
+      userId,
+      rivalId,
+      numCarta,
+    );
   }
 
   calcularRecompensas(partida: Game) {

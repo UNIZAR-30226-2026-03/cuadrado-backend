@@ -4,11 +4,16 @@ import { Card } from '../game/interfaces/card.interface';
 import { PlayerState } from '../game/interfaces/game.interface';
 import { BotAction } from './interfaces/bot-action.interface';
 import { BotStrategy } from './interfaces/bot-strategy.interface';
+import { PermisoHabilidad } from '../game/game.manager';
 
 export abstract class BotManager implements BotStrategy {
   protected logger = new Logger(this.constructor.name);
 
-  abstract decidir(partida: Game, botId: string): BotAction;
+  abstract decidir(
+    partida: Game,
+    botId: string,
+    contexto: PermisoHabilidad | null,
+  ): BotAction;
 
   /**
    * Obtiene el estado del bot en la partida

@@ -116,7 +116,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   server!: Server;
 
   private timeoutTicker?: NodeJS.Timeout;
-  private botsTicker?: NodeJS.Timeout;
+  private readonly queuedBotGames = new Set<string>();
+  private readonly processingBotGames = new Set<string>();
+  private static readonly MAX_BOT_ACTIONS_PER_FLUSH = 32;
 
   constructor(
     private readonly gameService: GameService,
@@ -127,26 +129,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     this.timeoutTicker = setInterval(() => {
       this.procesarTimeoutsTurno();
     }, 1000);
-
-    // Ticker para ejecutar acciones de bots
-    this.botsTicker = setInterval(() => {
-      this.procesarTurnosBot();
-    }, 500); // Ejecutar cada 500ms para respuesta rápida
   }
 
   handleDisconnect(): void {
-    // Hook required by lifecycle interface; socket-level disconnect is handled in RoomsGateway.
+    
   }
 
   onModuleDestroy(): void {
     if (this.timeoutTicker) {
       clearInterval(this.timeoutTicker);
       this.timeoutTicker = undefined;
-    }
-
-    if (this.botsTicker) {
-      clearInterval(this.botsTicker);
-      this.botsTicker = undefined;
     }
   }
 
@@ -164,44 +156,105 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         });
 
         this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
       }
     } catch {
       // Never throw inside ticker; game actions keep reporting detailed errors.
     }
   }
 
-  /**
-   * Procesa los turnos de bots de forma automática
-   * Se ejecuta cada 500ms aproximadamente
-   */
-  private procesarTurnosBot() {
-    try {
-      const partidasActivas = this.gameService.getActiveGames();
+  private scheduleBotProcessing(partida: Game) {
+    if (partida.estado !== 'activo') {
+      return;
+    }
 
-      for (const partida of partidasActivas) {
-        const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
-        
-        // Verificar si es turno de un bot
-        if (!this.botsService.esBot(turnoActualId)) {
-          continue;
+    const gameId = partida.gameId;
+    if (
+      this.processingBotGames.has(gameId) ||
+      this.queuedBotGames.has(gameId)
+    ) {
+      return;
+    }
+
+    this.queuedBotGames.add(gameId);
+
+    setTimeout(() => {
+      this.queuedBotGames.delete(gameId);
+      this.flushBotActions(gameId);
+    }, 0);
+  }
+
+  private flushBotActions(gameId: string) {
+    if (this.processingBotGames.has(gameId)) {
+      return;
+    }
+
+    this.processingBotGames.add(gameId);
+    let shouldReschedule = false;
+
+    try {
+      for (
+        let accionesProcesadas = 0;
+        accionesProcesadas < GameGateway.MAX_BOT_ACTIONS_PER_FLUSH;
+        accionesProcesadas++
+      ) {
+        const partida = this.gameService.getGameById(gameId);
+        if (partida.estado !== 'activo') {
+          return;
         }
 
-        // Obtener la dificultad del bot
-        const difficulty = this.botsService.extraerDificultad(turnoActualId);
+        const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
+        if (!this.botsService.esBot(turnoActualId)) {
+          return;
+        }
 
-        // Decidir acción
+        const difficulty = this.botsService.extraerDificultad(turnoActualId);
+        const contexto = this.gameService.getBotDecisionContext(
+          partida.gameId,
+          turnoActualId,
+        );
+
         const accion = this.botsService.decidirAccion(
           partida,
           turnoActualId,
           difficulty,
+          contexto,
         );
 
-        // Ejecutar acción automáticamente
-        this.ejecutarAccionBot(partida, turnoActualId, accion);
+        const actionApplied = this.ejecutarAccionBot(
+          partida,
+          turnoActualId,
+          accion,
+        );
+        if (!actionApplied) {
+          return;
+        }
       }
+
+      shouldReschedule = true;
     } catch (error) {
-      // Log but don't throw - keep the ticker running
-      console.error('Error en procesarTurnosBot:', error);
+      console.error('Error en flushBotActions:', error);
+    } finally {
+      this.processingBotGames.delete(gameId);
+    }
+
+    if (!shouldReschedule) {
+      return;
+    }
+
+    let partida: Game;
+    try {
+      partida = this.gameService.getGameById(gameId);
+    } catch {
+      return;
+    }
+    if (partida.estado !== 'activo') {
+      return;
+    }
+
+    const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
+    if (this.botsService.esBot(turnoActualId)) {
+      this.scheduleBotProcessing(partida);
     }
   }
 
@@ -212,41 +265,88 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     partida: Game,
     botId: string,
     accion: any, // BotAction
-  ) {
+  ): boolean {
     try {
       switch (accion.accion) {
         case 'robar':
-          this.ejecutarRobarBot(partida, botId);
-          break;
+          return this.ejecutarRobarBot(partida, botId);
         case 'descartar-pendiente':
-          this.ejecutarDescartarPendienteBot(partida, botId);
-          break;
+          return this.ejecutarDescartarPendienteBot(partida, botId);
         case 'carta-por-pendiente':
-          this.ejecutarCartaPorPendienteBot(
+          return this.ejecutarCartaPorPendienteBot(
             partida,
             botId,
             accion.cartaIndex,
           );
-          break;
+        case 'ver-carta':
+          return this.ejecutarVerCartaBot(partida, botId, accion.cartaIndex);
+        case 'ver-carta-propia-y-rival':
+          return this.ejecutarVerCartaPropiaYRivalBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+            accion.targetUserId,
+            accion.cartaIndexTarget,
+          );
+        case 'intercambiar-carta':
+          return this.ejecutarIntercambiarCartaBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+            accion.targetUserId,
+            accion.cartaIndexTarget,
+          );
+        case 'intercambiar-todas-cartas':
+          return this.ejecutarIntercambiarTodasCartasBot(
+            partida,
+            botId,
+            accion.targetUserId,
+          );
+        case 'hacer-robar-carta':
+          return this.ejecutarHacerRobarCartaBot(
+            partida,
+            botId,
+            accion.targetUserId,
+          );
+        case 'proteger-carta':
+          return this.ejecutarProtegerCartaBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+          );
+        case 'saltar-turno-jugador':
+          return this.ejecutarSaltarTurnoJugadorBot(
+            partida,
+            botId,
+            accion.targetUserId,
+          );
+        case 'jugador-menos-puntuacion':
+          return this.ejecutarJugadorMenosPuntuacionBot(partida, botId);
         case 'esperar':
-          // El bot espera, no hace nada
-          break;
+          return false;
         default:
-          // Acción no reconocida
-          break;
+          return false;
       }
     } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      if (this.esErrorHabilidadDenegada(error) && partida) {
+        this.notificarTodosHabilidadDenegada(partida, botId, accion.accion);
+        this.finalizarPartidaYSincronizarSala(partida);
+      }
       console.error(
         `Error ejecutando acción bot ${botId} (${accion.accion}):`,
         error,
       );
+      return false;
     }
   }
 
   /**
    * El bot roba una carta
    */
-  private ejecutarRobarBot(partida: Game, botId: string) {
+  private ejecutarRobarBot(partida: Game, botId: string): boolean {
     const resultado = this.gameService.robarCarta(partida, botId);
 
     if (resultado.reshuffle.huboRebarajado) {
@@ -258,12 +358,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       botId,
     });
+    return true;
   }
 
   /**
    * El bot descarta la carta pendiente
    */
-  private ejecutarDescartarPendienteBot(partida: Game, botId: string) {
+  private ejecutarDescartarPendienteBot(partida: Game, botId: string): boolean {
     const resultado = this.gameService.descartarPendiente(partida, botId);
 
     this.finalizarPartidaYSincronizarSala(partida);
@@ -277,6 +378,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       botId,
     });
+    return true;
   }
 
   /**
@@ -286,7 +388,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     partida: Game,
     botId: string,
     cartaIndex: number,
-  ) {
+  ): boolean {
     const carta = this.gameService.cartaPorPendiente(partida, cartaIndex, botId);
 
     this.finalizarPartidaYSincronizarSala(partida);
@@ -296,6 +398,150 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       botId,
     });
+    return true;
+  }
+
+  private ejecutarVerCartaBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+  ): boolean {
+    if (cartaIndex == null) {
+      return false;
+    }
+
+    this.gameService.verCarta(partida, botId, cartaIndex);
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosBotVerCarta(partida, botId, cartaIndex);
+    return true;
+  }
+
+  private ejecutarVerCartaPropiaYRivalBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+    rivalId?: string,
+    cartaIndexRival?: number,
+  ): boolean {
+    if (cartaIndex == null || rivalId == null || cartaIndexRival == null) {
+      return false;
+    }
+
+    this.gameService.verCarta(
+      partida,
+      botId,
+      cartaIndex,
+      rivalId,
+      cartaIndexRival,
+    );
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosBotVerCartaPropiaYRival(
+      partida,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    );
+    return true;
+  }
+
+  private ejecutarIntercambiarCartaBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+    rivalId?: string,
+    cartaIndexRival?: number,
+  ): boolean {
+    if (cartaIndex == null || rivalId == null || cartaIndexRival == null) {
+      return false;
+    }
+
+    this.gameService.intercambiarCartaBot(
+      partida,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    );
+    this.notificarTodosCambioCartas(
+      partida,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    );
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  private ejecutarIntercambiarTodasCartasBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+  ): boolean {
+    if (rivalId == null) {
+      return false;
+    }
+
+    this.gameService.intercambiarTodasCartas(partida, botId, rivalId);
+    this.notificarTodosCambioCartas(partida, botId, rivalId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  private ejecutarHacerRobarCartaBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+  ): boolean {
+    if (rivalId == null) {
+      return false;
+    }
+
+    this.gameService.hacerRobarCarta(partida, botId, rivalId);
+    this.notificarTodosHacerRobarCarta(partida, botId, rivalId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  private ejecutarProtegerCartaBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+  ): boolean {
+    if (cartaIndex == null) {
+      return false;
+    }
+
+    this.gameService.protegerCarta(partida, botId, cartaIndex);
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosCartaProtegida(partida, botId, cartaIndex);
+    return true;
+  }
+
+  private ejecutarSaltarTurnoJugadorBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+  ): boolean {
+    if (rivalId == null) {
+      return false;
+    }
+
+    this.gameService.saltarTurnoJugador(partida, botId, rivalId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosTurnoJugadorSaltado(partida, botId, rivalId);
+    return true;
+  }
+
+  private ejecutarJugadorMenosPuntuacionBot(partida: Game, botId: string): boolean {
+    const jugadorId = this.gameService.jugadorMenosPuntuacion(partida, botId);
+    this.server.to(partida.roomId).emit('game:bot-jugador-menos-puntuacion', {
+      gameId: partida.gameId,
+      botId,
+      jugadorId,
+    });
+    return true;
   }
 
   private notificarTodosCartaRobada(partida : Game ){
@@ -358,6 +604,58 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       jugadorId,
       habilidad,
+    });
+  }
+
+  private notificarTodosBotVerCarta(
+    partida: Game,
+    botId: string,
+    cartaIndex: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:bot-ver-carta', {
+      gameId: partida.gameId,
+      botId,
+      cartaIndex,
+    });
+  }
+
+  private notificarTodosBotVerCartaPropiaYRival(
+    partida: Game,
+    botId: string,
+    rivalId: string,
+    cartaIndex: number,
+    cartaIndexRival: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:bot-ver-carta-propia-y-rival', {
+      gameId: partida.gameId,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    });
+  }
+
+  private notificarTodosCartaProtegida(
+    partida: Game,
+    jugadorId: string,
+    cartaIndex: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:carta-protegida', {
+      gameId: partida.gameId,
+      jugadorId,
+      cartaIndex,
+    });
+  }
+
+  private notificarTodosTurnoJugadorSaltado(
+    partida: Game,
+    remitenteId: string,
+    destinatarioId: string,
+  ) {
+    this.server.to(partida.roomId).emit('game:turno-jugador-saltado', {
+      gameId: partida.gameId,
+      remitenteId,
+      destinatarioId,
     });
   }
   
@@ -472,6 +770,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         : this.gameService.inicioPartida(room);
 
       this.notificarTodosComienzoPartida(partida);
+      this.scheduleBotProcessing(partida);
 
       return{
         success: true,
@@ -554,6 +853,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         gameId : payload.gameId,
         game: resultado.cartaRobada,
       });
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -593,6 +893,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       }
 
       this.notificarTodosDescartarPendiente(partida,resultado.cartaDescartada);
+      this.scheduleBotProcessing(partida);
       return {
         success: true,
         gameId: partida.gameId,
@@ -622,6 +923,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       this.finalizarPartidaYSincronizarSala(partida);
 
       this.notificarTodosDescartarPendiente(partida, carta);
+      this.scheduleBotProcessing(partida);
       return {
         success: true,
         gameId: partida.gameId,
@@ -648,6 +950,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
         this.notificarTodosCambioCartas(partida,remitenteId, payload.destinatarioId
         ,payload.numCartaRemitente, payload.numCartaDestinatario);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -690,6 +993,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         carta: resultado.cartaPropia,
         cartaJugadorContrario: resultado.cartaRival,
       });
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -726,6 +1030,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         payload.destinatarioId);
       this.notificarTodosCambioCartas(partida,remitenteId, 
         payload.destinatarioId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -758,6 +1063,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       
       this.notificarTodosHacerRobarCarta(partida,remitenteId, 
         payload.adversarioId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -799,6 +1105,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
       this.gameService.protegerCarta(partida, remitenteId,
         payload.numCarta);
+      this.notificarTodosCartaProtegida(partida, remitenteId, payload.numCarta);
+      this.scheduleBotProcessing(partida);
   
       return {
         success: true,
@@ -870,6 +1178,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         gameId: payload.gameId,
         jugadorId: jugadorId,
       });
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -906,6 +1215,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       );
 
       this.gameService.desactivarProximaHabilidad(partida, userId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -978,6 +1288,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       //carta más o una menos
       this.notificarTodosAccionCartaSobreOtra(partida, resultado.numCartas,
         contexto.userId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -1024,6 +1335,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           usuarioIniciador: contexto.userId,
         });
       } 
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -1066,6 +1378,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         acción*/
         this.notificarTodosCambioCartas(partida,payload.rivalId,contexto.userId);
       }
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,

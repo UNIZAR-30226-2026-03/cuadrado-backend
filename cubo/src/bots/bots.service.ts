@@ -3,6 +3,7 @@ import type { BotAction } from './interfaces/bot-action.interface';
 import type { BotStrategy } from './interfaces/bot-strategy.interface';
 import type { BotDifficulty } from './interfaces/bot-difficulty.interface';
 import { Game } from '../game/interfaces/game.interface';
+import { PermisoHabilidad } from '../game/game.manager';
 import { Room } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
 
@@ -23,10 +24,11 @@ export class BotsService {
     partida: Game,
     botId: string,
     difficulty: BotDifficulty = 'easy',
+    contexto: PermisoHabilidad | null = null,
   ): BotAction {
     try {
       const strategy = this.getStrategy(difficulty);
-      const accion = strategy.decidir(partida, botId);
+      const accion = strategy.decidir(partida, botId, contexto);
 
       this.logger.debug(
         `Bot ${botId} (${difficulty}) decidió: ${accion.accion}`,
