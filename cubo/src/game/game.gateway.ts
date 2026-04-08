@@ -299,10 +299,15 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   }
 
   private notificarTodosCartaRobada(partida : Game ){
+    
+    const cartasRestantes = partida.estadoGlobal.cartasVigentes.length;
+
     this.server.to(partida.roomId).emit('game:carta-robada',{
       partidaId : partida.gameId,
       jugadorRobado: partida.estadoGlobal.turn,
+      cartasRestantes: cartasRestantes,
     });
+
   }
  
   private notificarTodosDescartarPendiente(partida : Game, carta: Card){
@@ -314,18 +319,23 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
 
   private notificarTodosComienzoPartida(partida: Game){
+
     this.server.to(partida.roomId).emit('game:inicio-partida',{
       partidaId : partida.gameId,
+      jugadores: partida.estadoGlobal.turnoJugadores,
     });
   }
 
   private notificarTodosCambioCartas(partida: Game, idRemitente: string,
-    idDestinatario: string
+    idDestinatario: string , numCartaRemitente?: number, 
+    numCartaDestinatario?: number
   ){
      this.server.to(partida.roomId).emit('game:intercambio-cartas',{
       partidaId : partida.gameId,
       remitente: idRemitente,
       destinatario: idDestinatario,
+      numCartaRemitente : numCartaRemitente,
+      numCartaDestinatario : numCartaDestinatario,
     });
   }
 
@@ -460,6 +470,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
             client.id,
           )
         : this.gameService.inicioPartida(room);
+
       this.notificarTodosComienzoPartida(partida);
 
       return{
@@ -537,10 +548,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         this.notificarTodosRebarajado(partida);
       }
 
+
       this.notificarTodosCartaRobada(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
         gameId : payload.gameId,
+        game: resultado.cartaRobada,
       });
+
       return {
         success: true,
       };
@@ -628,11 +642,12 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         payload.gameId,
       );
 
-      this.gameService.intercambiarCarta(partida, remitenteId,
+      const resultado = this.gameService.intercambiarCarta(partida, remitenteId,
         payload.destinatarioId, payload.numCartaRemitente, 
         payload.numCartaDestinatario);
-      this.notificarTodosCambioCartas(partida,remitenteId, 
-        payload.destinatarioId);
+
+        this.notificarTodosCambioCartas(partida,remitenteId, payload.destinatarioId
+        ,payload.numCartaRemitente, payload.numCartaDestinatario);
 
       return {
         success: true,

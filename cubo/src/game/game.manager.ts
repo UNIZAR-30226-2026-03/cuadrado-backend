@@ -1063,7 +1063,7 @@ export class GameManager {
     destinatarioId: string,
     numCartaRemitente: number,
     numCartaDestinatario: number,
-  ) {
+  ){
     
     this.validarAccionTurno(partida, remitenteId, 'OWNER_TURN_ONLY');
 
