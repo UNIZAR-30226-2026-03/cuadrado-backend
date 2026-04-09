@@ -1,7 +1,7 @@
 import { Injectable, Inject, Logger } from '@nestjs/common';
 import type { BotAction } from './interfaces/bot-action.interface';
 import type { BotStrategy } from './interfaces/bot-strategy.interface';
-import type { BotDifficulty } from './interfaces/bot-difficulty.interface';
+import type { dificultadBot } from '../rooms/interfaces/room.interface';
 import { Game } from '../game/interfaces/game.interface';
 import { PermisoHabilidad } from '../game/game.manager';
 import { Room } from '../rooms/interfaces/room.interface';
@@ -23,7 +23,7 @@ export class BotsService {
   decidirAccion(
     partida: Game,
     botId: string,
-    difficulty: BotDifficulty = 'easy',
+    difficulty: dificultadBot = 'facil',
     contexto: PermisoHabilidad | null = null,
   ): BotAction {
     try {
@@ -50,7 +50,7 @@ export class BotsService {
    */
   agregarBotsARoom(
     room: Room,
-    difficulty: BotDifficulty = 'easy',
+    difficulty: dificultadBot = 'facil',
   ): void {
     if (!room.rules.fillWithBots) {
       this.logger.debug(`Room ${room.code} no tiene fillWithBots habilitado`);
@@ -78,13 +78,16 @@ export class BotsService {
   private crearBotEnRoom(
     room: Room,
     index: number,
-    difficulty: BotDifficulty,
+    difficulty: dificultadBot,
   ): void {
     const botId = `bot_${room.code}_${difficulty}_${index}`;
     const idInRoom = room.players.size;
 
     const botPlayer: Player = {
       userId: botId,
+      controlador: 'bot',
+      dificultadBot: difficulty,
+      nombreEnPartida: `bot${idInRoom + 1}`,
       idInRoom,
       socketId: '', // Los bots no tienen socket
       isHost: false,
@@ -99,34 +102,16 @@ export class BotsService {
   /**
    * Obtiene la estrategia correspondiente según dificultad
    */
-  private getStrategy(difficulty: BotDifficulty): BotStrategy {
+  private getStrategy(difficulty: dificultadBot): BotStrategy {
     switch (difficulty) {
-      case 'medium':
+      case 'media':
         return this.mediumStrategy;
-      case 'hard':
+      case 'dificil':
         return this.hardStrategy;
-      case 'easy':
+      case 'facil':
       default:
         return this.easyStrategy;
     }
   }
 
-  /**
-   * Verifica si un userId corresponde a un bot
-   */
-  esBot(userId: string): boolean {
-    return userId.startsWith('bot_');
-  }
-
-  /**
-   * Extrae la dificultad del ID del bot
-   * Formato: "bot_ROOMCODE_DIFFICULTY_INDEX"
-   */
-  extraerDificultad(botId: string): BotDifficulty {
-    const partes = botId.split('_');
-    if (partes.length >= 3 && ['easy', 'medium', 'hard'].includes(partes[2])) {
-      return partes[2] as BotDifficulty;
-    }
-    return 'easy';
-  }
 }

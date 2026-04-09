@@ -14,6 +14,7 @@ import { GameService } from './game.service';
 import { BotsService } from '../bots/bots.service';
 import { FinPartidaMotivo, Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { dificultadBot } from '../rooms/interfaces/room.interface';
 import {
   HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE,
   SIN_CARTAS_ERROR_MESSAGE,
@@ -91,6 +92,11 @@ interface guardarYCerrarPayload {
   gameId: string;
 }
 
+interface abandonarPartidaPayload {
+  gameId: string;
+  dificultadBot?: dificultadBot;
+}
+
 interface prepararIntercabioCartaPayload {
   gameId: string,
   numCartaJugador: number,
@@ -131,8 +137,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     }, 1000);
   }
 
-  handleDisconnect(): void {
-    
+  handleDisconnect(_client: Socket): void {
   }
 
   onModuleDestroy(): void {
@@ -193,7 +198,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     let shouldReschedule = false;
 
     try {
-      for (
+      for ( 
         let accionesProcesadas = 0;
         accionesProcesadas < GameGateway.MAX_BOT_ACTIONS_PER_FLUSH;
         accionesProcesadas++
@@ -204,11 +209,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         }
 
         const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
-        if (!this.botsService.esBot(turnoActualId)) {
+        const estadoTurnoActual =
+          partida.estadoGlobal.jugadores[partida.estadoGlobal.turn];
+        if (estadoTurnoActual.controlador !== 'bot') {
           return;
         }
 
-        const difficulty = this.botsService.extraerDificultad(turnoActualId);
+        const difficulty = estadoTurnoActual.dificultadBot ?? 'facil';
         const contexto = this.gameService.getBotDecisionContext(
           partida.gameId,
           turnoActualId,
@@ -253,7 +260,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     }
 
     const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
-    if (this.botsService.esBot(turnoActualId)) {
+    const estadoTurnoActual = partida.estadoGlobal.jugadores[partida.estadoGlobal.turn];
+    if (estadoTurnoActual.controlador === 'bot') {
       this.scheduleBotProcessing(partida);
     }
   }
@@ -563,12 +571,40 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     });
   }
 
+  private serializarJugadoresPartida(partida: Game) {
+    return partida.estadoGlobal.turnoJugadores.map((userId, index) => {
+      const jugador = partida.estadoGlobal.jugadores[index];
+      return {
+        userId,
+        controlador: jugador.controlador,
+        dificultadBot: jugador.dificultadBot,
+        nombreEnPartida: jugador.nombreEnPartida,
+      };
+    });
+  }
 
   private notificarTodosComienzoPartida(partida: Game){
 
     this.server.to(partida.roomId).emit('game:inicio-partida',{
       partidaId : partida.gameId,
       jugadores: partida.estadoGlobal.turnoJugadores,
+      jugadoresDetalle: this.serializarJugadoresPartida(partida),
+    });
+  }
+
+  private notificarTodosCambioControladorJugador(
+    partida: Game,
+    userId: string,
+    controlador: 'humano' | 'bot',
+    dificultadBot?: string,
+    nombreEnPartida?: string,
+  ) {
+    this.server.to(partida.roomId).emit('game:player-controller-changed', {
+      gameId: partida.gameId,
+      userId,
+      controlador,
+      dificultadBot,
+      nombreEnPartida,
     });
   }
 
@@ -805,6 +841,49 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         success: true,
         gameId: resultado.gameId,
         roomCode: resultado.roomCode,
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:abandonar-partida')
+  abandonarPartida(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: abandonarPartidaPayload,
+  ) {
+    try {
+      const { partida, userId } = this.getValidatedGameContext(client, payload.gameId);
+      const resultado = this.gameService.abandonarPartidaConBot(
+        partida,
+        userId,
+        payload.dificultadBot ?? 'media',
+      );
+
+      if (!resultado) {
+        throw new Error('No se ha podido sustituir al jugador por un bot');
+      }
+
+      this.notificarTodosCambioControladorJugador(
+        resultado.partida,
+        resultado.userId,
+        resultado.controlador,
+        resultado.dificultadBot,
+        resultado.nombreEnPartida,
+      );
+
+      if (resultado.roomState) {
+        this.server.to(resultado.partida.roomId).emit('room:update', resultado.roomState);
+      }
+
+      client.leave(resultado.partida.roomId);
+      this.scheduleBotProcessing(resultado.partida);
+
+      return {
+        success: true,
+        gameId: resultado.partida.gameId,
+        userId: resultado.userId,
+        controlador: resultado.controlador,
       };
     } catch (error) {
       this.handleWsError(error);

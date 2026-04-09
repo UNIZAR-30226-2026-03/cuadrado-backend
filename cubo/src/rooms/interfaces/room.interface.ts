@@ -1,6 +1,15 @@
 import { Player } from './player.interface';
 import { RulesConfig } from './rules-config.interface';
 
+export type playerController =
+  | 'bot'
+  | 'humano';
+
+export type dificultadBot =
+ | 'facil'
+ | 'media'
+ |'dificil';
+
 export interface PublicRoomSummary {
   name: string;
   code: string;
@@ -25,6 +34,9 @@ export interface RoomState {
   hostId: string;
   players: {
     userId: string;
+    controlador: playerController;
+    dificultadBot?: dificultadBot;
+    nombreEnPartida?: string; //sólo si es bot
     socketId: string;
     isHost: boolean;
     joinedAt: Date;

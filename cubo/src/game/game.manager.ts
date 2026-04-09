@@ -6,6 +6,7 @@ import {
   FinPartidaMotivo,
 } from './interfaces/game.interface';
 import { Card, PaloCarta } from './interfaces/card.interface';
+import { dificultadBot, playerController } from 'src/rooms/interfaces/room.interface';
 
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -81,6 +82,9 @@ export interface ResultadoPonerCartaSobreOtra {
 
 export interface PersistedPlayerState {
   userId: string;
+  controlador: playerController;
+  dificultadBot: dificultadBot | undefined;
+  nombreEnPartida: string | undefined;
   turnOrder: number;
   cards: number[];
   habilidades: number[];
@@ -92,6 +96,13 @@ export interface PersistedGameState {
   habilidadesActivadas: number[];
   discardedCards: number[];
   players: PersistedPlayerState[];
+}
+
+export interface EstadoInicialJugador {
+  userId: string;
+  controlador: playerController;
+  dificultadBot?: dificultadBot;
+  nombreEnPartida?: string;
 }
 
 export const SIN_CARTAS_ERROR_MESSAGE =
@@ -152,6 +163,28 @@ export class GameManager {
     return Array.from(this.games.values()).filter(
       (game) => game.estado === 'activo',
     );
+  }
+
+  cambiarControladorJugador(
+    partida: Game,
+    userId: string,
+    controlador: playerController,
+    dificultadBot?: dificultadBot,
+    nombreEnPartida?: string,
+  ): void {
+    const idEnPartida = this.obtenerIndiceJugador(partida, userId);
+    const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+
+    estadoJugador.controlador = controlador;
+    if (controlador === 'bot') {
+      estadoJugador.dificultadBot = dificultadBot;
+      estadoJugador.nombreEnPartida = nombreEnPartida;
+    } else {
+      estadoJugador.dificultadBot = undefined;
+      estadoJugador.nombreEnPartida = undefined;
+    }
+
+    partida.updatedAt = new Date();
   }
 
   private getTurnUserId(partida: Game): string {
@@ -664,6 +697,9 @@ export class GameManager {
         const playerState = partida.estadoGlobal.jugadores[turnOrder];
         return {
           userId,
+          controlador: playerState.controlador,
+          dificultadBot: playerState.dificultadBot,
+          nombreEnPartida: playerState.nombreEnPartida,
           turnOrder,
           cards: playerState.cartasMano.map((card) =>
             GameManager.encodeCard(card),
@@ -717,6 +753,9 @@ export class GameManager {
 
     const estadoJugadores: PlayerState[] = playersOrdered.map((player) => ({
       cartasMano: player.cards.map((code) => GameManager.decodeCard(code)),
+      controlador: player.controlador,
+      dificultadBot: player.dificultadBot,
+      nombreEnPartida: player.nombreEnPartida,
       habilidadesActivadas: [...player.habilidades],
       saltarTurno: false,
     }));
@@ -914,25 +953,25 @@ export class GameManager {
   }
 
   inicioPartida(
-    numJugadores: number,
     codigoSala: string,
-    idJugadores: string[],
+    jugadoresIniciales: EstadoInicialJugador[],
   ): Game {
     if (this.roomToGame.has(codigoSala)) {
       throw new Error('Ya existe una partida activa para la sala');
     }
 
+    const numJugadores = jugadoresIniciales.length;
     const aux: Card[] = GameManager.rellenarBaraja();
     const baraja: Card[] = GameManager.mezclarArray(aux);
     const gameCode = this.generateUniqueRoomCode();
-    const estadoJugadores: PlayerState[] = Array.from(
-      { length: numJugadores },
-      () => ({
+    const estadoJugadores: PlayerState[] = jugadoresIniciales.map((jugador) => ({
         cartasMano: [],
+        controlador: jugador.controlador,
+        dificultadBot: jugador.dificultadBot,
+        nombreEnPartida: jugador.nombreEnPartida,
         habilidadesActivadas: [],
         saltarTurno: false,
-      }),
-    );
+      }));
 
     GameManager.asignarCartasJugadores(baraja, estadoJugadores, numJugadores);
     const estadoGlobal: GameState = {
@@ -945,7 +984,7 @@ export class GameManager {
       cartasVigentes: baraja,
       cartasDescartadas: [],
       habilidadesActivadas: [],
-      turnoJugadores: idJugadores,
+      turnoJugadores: jugadoresIniciales.map((jugador) => jugador.userId),
       jugadores: estadoJugadores,
     };
 

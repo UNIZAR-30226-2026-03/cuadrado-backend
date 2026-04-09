@@ -7,6 +7,8 @@ import {
 } from './interfaces/room.interface';
 import { RulesConfig } from './interfaces/rules-config.interface';
 import { BotsService } from '../bots/bots.service';
+import { playerController } from "./interfaces/room.interface";
+import { dificultadBot } from "./interfaces/room.interface";
 
 const RECONNECT_TIMEOUT_MS = 25000;
 const ROOM_CODE_LENGTH = 6;
@@ -118,7 +120,9 @@ export class RoomManager {
         if (existingPlayer.disconnectTimeout) {
           clearTimeout(existingPlayer.disconnectTimeout);
         }
-        this.userToRoom.delete(existingPlayer.userId);
+        if (this.userToRoom.get(existingPlayer.userId) === room.code) {
+          this.userToRoom.delete(existingPlayer.userId);
+        }
       });
 
       this.rooms.delete(room.code);
@@ -137,35 +141,58 @@ export class RoomManager {
 
   handleDisconnect(userId: string): {
     roomCode: string | null;
-    shouldWaitForReconnect: boolean;
+    shouldEmitRoomUpdate: boolean;
+    roomClosed: boolean;
+    waitingForReconnect: boolean;
   } {
     const roomCode = this.userToRoom.get(userId);
 
     if (!roomCode) {
-      return { roomCode: null, shouldWaitForReconnect: false };
+      return {
+        roomCode: null,
+        shouldEmitRoomUpdate: false,
+        roomClosed: false,
+        waitingForReconnect: false,
+      };
     }
 
     const room = this.rooms.get(roomCode);
     if (!room) {
-      return { roomCode: null, shouldWaitForReconnect: false };
+      return {
+        roomCode: null,
+        shouldEmitRoomUpdate: false,
+        roomClosed: false,
+        waitingForReconnect: false,
+      };
     }
 
     const player = room.players.get(userId);
     if (!player) {
-      return { roomCode: null, shouldWaitForReconnect: false };
+      return {
+        roomCode: null,
+        shouldEmitRoomUpdate: false,
+        roomClosed: false,
+        waitingForReconnect: false,
+      };
     }
 
-    player.connected = false;
-
-    if (player.disconnectTimeout) {
-      clearTimeout(player.disconnectTimeout);
+    if (room.started) {
+      this.marcarJugadorDesconectado(userId);
+      return {
+        roomCode,
+        shouldEmitRoomUpdate: true,
+        roomClosed: false,
+        waitingForReconnect: true,
+      };
     }
 
-    player.disconnectTimeout = setTimeout(() => {
-      this.leaveRoom(userId);
-    }, RECONNECT_TIMEOUT_MS);
-
-    return { roomCode, shouldWaitForReconnect: true };
+    const leaveResult = this.leaveRoom(userId);
+    return {
+      roomCode,
+      shouldEmitRoomUpdate: Boolean(leaveResult.room && !leaveResult.isHostLeaving),
+      roomClosed: Boolean(leaveResult.room && leaveResult.isHostLeaving),
+      waitingForReconnect: false,
+    };
   }
 
   handleReconnect(
@@ -211,14 +238,14 @@ export class RoomManager {
     }
 
     const allConnected = Array.from(room.players.values()).every(
-      (player) => player.connected,
+      (player) => player.connected || player.controlador === 'bot',
     );
 
     if (!allConnected) {
       throw new Error('All players must be connected to start');
     }
     // Agregar bots si está configurado
-    this.botsService.agregarBotsARoom(room, 'easy');
+    this.botsService.agregarBotsARoom(room, 'facil');
 
     
     if (room.players.size < 2) {
@@ -247,6 +274,23 @@ export class RoomManager {
     }
 
     room.started = false;
+
+    const hayHumanosEnSala = Array.from(room.players.values()).some(
+      (player) =>
+        player.controlador === 'humano' &&
+        this.userToRoom.get(player.userId) === room.code,
+    );
+
+    if (!hayHumanosEnSala) {
+      room.players.forEach((player) => {
+        if (this.userToRoom.get(player.userId) === room.code) {
+          this.userToRoom.delete(player.userId);
+        }
+      });
+      this.rooms.delete(room.code);
+      return null;
+    }
+
     return room;
   }
 
@@ -263,6 +307,9 @@ export class RoomManager {
       hostId: room.hostId,
       players: Array.from(room.players.values()).map((player) => ({
         userId: player.userId,
+        controlador: player.controlador,
+        dificultadBot: player.dificultadBot,
+        nombreEnPartida: player.nombreEnPartida,
         socketId: player.socketId,
         isHost: player.isHost,
         joinedAt: player.joinedAt,
@@ -294,6 +341,84 @@ export class RoomManager {
         rules: room.rules,
         createdAt: room.createdAt,
       }));
+  }
+
+  marcarJugadorDesconectado(userId: string): Room | null {
+    const room = this.getRoomByUserId(userId);
+
+    if (!room) {
+      return null;
+    }
+
+    const player = room.players.get(userId);
+    if (!player) {
+      return null;
+    }
+
+    if (player.disconnectTimeout) {
+      clearTimeout(player.disconnectTimeout);
+      player.disconnectTimeout = undefined;
+    }
+
+    player.connected = false;
+    player.socketId = '';
+
+    return room;
+  }
+
+  cambiarControladorJugador(
+    userId: string,
+    controlador: playerController,
+    dificultadBot?: dificultadBot,
+  ): Player | null {
+    const room = this.getRoomByUserId(userId);
+
+    if (!room) {
+      return null;
+    }
+
+    const player = room.players.get(userId);
+    if (!player) {
+      return null;
+    }
+
+    this.establecerControladorJugador(player, controlador, dificultadBot);
+    return player;
+  }
+
+  desvincularUsuarioDeSalaActiva(userId: string): Room | null {
+    const roomCode = this.userToRoom.get(userId);
+    if (!roomCode) {
+      return null;
+    }
+
+    const room = this.rooms.get(roomCode) || null;
+    if (!room) {
+      this.userToRoom.delete(userId);
+      return null;
+    }
+
+    this.userToRoom.delete(userId);
+
+    if (room.hostId === userId) {
+      const hostAnterior = room.players.get(userId);
+      if (hostAnterior) {
+        hostAnterior.isHost = false;
+      }
+
+      const nuevoHost = Array.from(room.players.values()).find(
+        (player) =>
+          player.userId !== userId &&
+          player.controlador === 'humano' &&
+          this.userToRoom.get(player.userId) === room.code,
+      );
+      if (nuevoHost) {
+        room.hostId = nuevoHost.userId;
+        nuevoHost.isHost = true;
+      }
+    }
+
+    return room;
   }
 
   private getRoomByCode(roomCode: string): Room | null {
@@ -332,9 +457,12 @@ export class RoomManager {
     socketId: string,
     isHost: boolean,
     idInRoom: number,
+    controlador: playerController = 'humano',
   ): Player {
+   
     return {
       userId,
+      controlador,
       socketId,
       isHost,
       joinedAt: new Date(),
@@ -343,6 +471,23 @@ export class RoomManager {
       idInRoom: idInRoom,
     };
   }
+
+  private establecerControladorJugador(user: Player, controlador: playerController,
+    dificultadBot?: dificultadBot,){
+
+      user.controlador = controlador;
+
+      if(user.controlador === 'bot'){
+        user.dificultadBot = dificultadBot;
+        user.nombreEnPartida = `bot${user.idInRoom + 1}`;
+        user.connected = false;
+        user.socketId = '';
+        return;
+      }
+
+      user.dificultadBot = undefined;
+      user.nombreEnPartida = undefined;
+    }
 
 
 }
