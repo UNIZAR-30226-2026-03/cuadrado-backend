@@ -1,14 +1,11 @@
 import 'dotenv/config';
 import { ConfigService } from '@nestjs/config';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { GameManager } from './game.manager';
 import { GameService } from './game.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomManager } from '../rooms/room.manager';
 import { BotsService } from '../bots/bots.service';
-import { Room } from '../rooms/interfaces/room.interface';
-import { Game } from './interfaces/game.interface';
 
 const makeUser = (username: string) => ({
   username,
