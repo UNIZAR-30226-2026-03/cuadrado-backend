@@ -1,6 +1,7 @@
 import {
   GameManager,
   GUARDADO_INVALIDO_ERROR_MESSAGE,
+  EstadoInicialJugador,
 } from './game.manager';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
@@ -21,11 +22,14 @@ describe('GameManager', () => {
   let manager: GameManager;
   let game: Game;
   const roomId = 'ROOM01';
-  const players = ['u1', 'u2'];
+  const jugadoresIniciales: EstadoInicialJugador[] = [
+    { userId: 'u1' },
+    { userId: 'u2' },
+  ];
 
   beforeEach(() => {
     manager = new GameManager();
-    game = manager.inicioPartida(2, roomId, players);
+    game = manager.inicioPartida(roomId, jugadoresIniciales);
   });
 
   it('inicia partida con 4 cartas por jugador y fase WAIT_DRAW', () => {

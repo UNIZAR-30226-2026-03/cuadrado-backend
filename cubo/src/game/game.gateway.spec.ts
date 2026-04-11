@@ -8,6 +8,7 @@ import {
 import { GameGateway } from './game.gateway';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { BotsService } from '../bots/bots.service';
 import { Player } from '../rooms/interfaces/player.interface';
 import { Room } from '../rooms/interfaces/room.interface';
 import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
@@ -87,6 +88,7 @@ type TestClientSocket = Pick<Socket, 'id' | 'data' | 'rooms'>;
 describe('GameGateway', () => {
   let gateway: GameGateway;
   let gameService: jest.Mocked<GameService>;
+  let botsService: jest.Mocked<BotsService>;
   let toMock: jest.Mock;
   let inMock: jest.Mock;
   let socketsLeaveMock: jest.Mock;
@@ -120,13 +122,21 @@ describe('GameGateway', () => {
       listarPartidasGuardadas: jest.fn(),
       robarCarta: jest.fn(),
       descartarPendiente: jest.fn(),
+      getGameById: jest.fn(),
+      getBotDecisionContext: jest.fn(),
       resolverTimeoutsTurnoActivos: jest.fn().mockReturnValue([]),
       calcularRecompensas: jest.fn().mockReturnValue([]),
       aplicarRecompensas: jest.fn(),
       resetRoomAfterGameAndGetState: jest.fn().mockReturnValue(null),
     } as unknown as jest.Mocked<GameService>;
 
-    gateway = new GameGateway(gameService);
+    gameService.getGameById.mockImplementation(() => createGame());
+
+    botsService = {
+      decidirAccion: jest.fn(),
+    } as unknown as jest.Mocked<BotsService>;
+
+    gateway = new GameGateway(gameService, botsService);
     (gateway as any).server = {
       to: toMock,
       in: inMock.mockReturnValue({ socketsLeave: socketsLeaveMock }),
@@ -139,6 +149,7 @@ describe('GameGateway', () => {
 
     gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
     gameService.inicioPartida.mockReturnValue(game);
+    gameService.getGameById.mockReturnValue(game);
 
     const result = await gateway.iniciarPartida(client as Socket, undefined);
 
@@ -146,9 +157,13 @@ describe('GameGateway', () => {
     expect(gameService.inicioPartida).toHaveBeenCalledWith(room);
     expect(gameService.cargarPartidaGuardada).not.toHaveBeenCalled();
     expect(toMock).toHaveBeenCalledWith('ROOM1');
-    expect(emitByTarget.ROOM1).toHaveBeenCalledWith('game:inicio-partida', {
-      partidaId: 'G1',
-    });
+    expect(emitByTarget.ROOM1).toHaveBeenCalledWith(
+      'game:inicio-partida',
+      expect.objectContaining({
+        partidaId: 'G1',
+        jugadores: ['u1', 'u2'],
+      }),
+    );
     expect(result).toEqual({
       success: true,
       gameId: 'G1',
@@ -163,6 +178,7 @@ describe('GameGateway', () => {
 
     gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
     gameService.cargarPartidaGuardada.mockResolvedValue(game);
+    gameService.getGameById.mockReturnValue(game);
 
     const result = await gateway.iniciarPartida(client as Socket, {
       savedGameId: 'SAVE01',
@@ -174,9 +190,13 @@ describe('GameGateway', () => {
       'socket-1',
     );
     expect(toMock).toHaveBeenCalledWith('ROOM1');
-    expect(emitByTarget.ROOM1).toHaveBeenCalledWith('game:inicio-partida', {
-      partidaId: 'SAVE01',
-    });
+    expect(emitByTarget.ROOM1).toHaveBeenCalledWith(
+      'game:inicio-partida',
+      expect.objectContaining({
+        partidaId: 'SAVE01',
+        jugadores: ['u1', 'u2'],
+      }),
+    );
     expect(result).toEqual({
       success: true,
       gameId: 'SAVE01',
@@ -238,6 +258,7 @@ describe('GameGateway', () => {
   it('robarCarta emite decision al jugador y broadcast a sala', () => {
     const game = createGame();
     gameService.validateGameContext.mockReturnValue(createGameContext(game));
+    gameService.getGameById.mockReturnValue(game);
     gameService.robarCarta.mockReturnValue({
       cartaRobada: {
         carta: 4,
@@ -256,14 +277,19 @@ describe('GameGateway', () => {
       'game:carta-robada',
       expect.objectContaining({ partidaId: 'G1' }),
     );
-    expect(emitByTarget['socket-1']).toHaveBeenCalledWith('game:decision-requerida', {
-      gameId: 'G1',
-    });
+    expect(emitByTarget['socket-1']).toHaveBeenCalledWith(
+      'game:decision-requerida',
+      expect.objectContaining({
+        gameId: 'G1',
+        game: expect.objectContaining({ carta: 4 }),
+      }),
+    );
   });
 
   it('robarCarta emite mazo-rebarajado cuando aplica', () => {
     const game = createGame();
     gameService.validateGameContext.mockReturnValue(createGameContext(game));
+    gameService.getGameById.mockReturnValue(game);
     gameService.robarCarta.mockReturnValue({
       cartaRobada: {
         carta: 4,
