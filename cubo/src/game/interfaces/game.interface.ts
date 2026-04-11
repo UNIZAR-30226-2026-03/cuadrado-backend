@@ -1,4 +1,4 @@
-import { Room } from '../../rooms/interfaces/room.interface';
+import { dificultadBot, playerController, Room } from '../../rooms/interfaces/room.interface';
 import { Card } from './card.interface';
 
 export type FinPartidaMotivo =
@@ -34,6 +34,9 @@ export interface GameState {
 
 export interface PlayerState {
     cartasMano : Card[];
+    controlador: playerController;
+    dificultadBot?: dificultadBot;
+    nombreEnPartida?: string;
     saltarTurno : Boolean;
     habilidadesActivadas : number[];
     cartaPendiente?: Card;

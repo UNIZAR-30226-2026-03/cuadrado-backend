@@ -1,6 +1,6 @@
 import { Injectable, Logger, UnauthorizedException, InternalServerErrorException } from 
     "@nestjs/common";
-import { PrismaService } from "src/prisma/prisma.service";
+import { PrismaService } from '../prisma/prisma.service';
 import { forgotten_passwdDto } from "./dto/fg_passwd.dto";
 import { codeAuthDto } from "./dto/codeAuth.dto";
 import { resetPasswordDto } from "./dto/reset-password.dto";

@@ -8,6 +8,7 @@ import {
 import { GameGateway } from './game.gateway';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { BotsService } from '../bots/bots.service';
 import { Player } from '../rooms/interfaces/player.interface';
 import { Room } from '../rooms/interfaces/room.interface';
 import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
@@ -87,6 +88,7 @@ type TestClientSocket = Pick<Socket, 'id' | 'data' | 'rooms'>;
 describe('GameGateway', () => {
   let gateway: GameGateway;
   let gameService: jest.Mocked<GameService>;
+  let botsService: jest.Mocked<BotsService>;
   let toMock: jest.Mock;
   let inMock: jest.Mock;
   let socketsLeaveMock: jest.Mock;
@@ -120,13 +122,21 @@ describe('GameGateway', () => {
       listarPartidasGuardadas: jest.fn(),
       robarCarta: jest.fn(),
       descartarPendiente: jest.fn(),
+      getGameById: jest.fn(),
+      getBotDecisionContext: jest.fn(),
       resolverTimeoutsTurnoActivos: jest.fn().mockReturnValue([]),
       calcularRecompensas: jest.fn().mockReturnValue([]),
       aplicarRecompensas: jest.fn(),
       resetRoomAfterGameAndGetState: jest.fn().mockReturnValue(null),
     } as unknown as jest.Mocked<GameService>;
 
-    gateway = new GameGateway(gameService);
+    gameService.getGameById.mockImplementation(() => createGame());
+
+    botsService = {
+      decidirAccion: jest.fn(),
+    } as unknown as jest.Mocked<BotsService>;
+
+    gateway = new GameGateway(gameService, botsService);
     (gateway as any).server = {
       to: toMock,
       in: inMock.mockReturnValue({ socketsLeave: socketsLeaveMock }),
@@ -139,6 +149,7 @@ describe('GameGateway', () => {
 
     gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
     gameService.inicioPartida.mockReturnValue(game);
+    gameService.getGameById.mockReturnValue(game);
 
     const result = await gateway.iniciarPartida(client as Socket, undefined);
 
@@ -146,9 +157,13 @@ describe('GameGateway', () => {
     expect(gameService.inicioPartida).toHaveBeenCalledWith(room);
     expect(gameService.cargarPartidaGuardada).not.toHaveBeenCalled();
     expect(toMock).toHaveBeenCalledWith('ROOM1');
-    expect(emitByTarget.ROOM1).toHaveBeenCalledWith('game:inicio-partida', {
-      partidaId: 'G1',
-    });
+    expect(emitByTarget.ROOM1).toHaveBeenCalledWith(
+      'game:inicio-partida',
+      expect.objectContaining({
+        partidaId: 'G1',
+        jugadores: ['u1', 'u2'],
+      }),
+    );
     expect(result).toEqual({
       success: true,
       gameId: 'G1',
@@ -163,6 +178,7 @@ describe('GameGateway', () => {
 
     gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
     gameService.cargarPartidaGuardada.mockResolvedValue(game);
+    gameService.getGameById.mockReturnValue(game);
 
     const result = await gateway.iniciarPartida(client as Socket, {
       savedGameId: 'SAVE01',
@@ -174,9 +190,13 @@ describe('GameGateway', () => {
       'socket-1',
     );
     expect(toMock).toHaveBeenCalledWith('ROOM1');
-    expect(emitByTarget.ROOM1).toHaveBeenCalledWith('game:inicio-partida', {
-      partidaId: 'SAVE01',
-    });
+    expect(emitByTarget.ROOM1).toHaveBeenCalledWith(
+      'game:inicio-partida',
+      expect.objectContaining({
+        partidaId: 'SAVE01',
+        jugadores: ['u1', 'u2'],
+      }),
+    );
     expect(result).toEqual({
       success: true,
       gameId: 'SAVE01',
@@ -238,6 +258,7 @@ describe('GameGateway', () => {
   it('robarCarta emite decision al jugador y broadcast a sala', () => {
     const game = createGame();
     gameService.validateGameContext.mockReturnValue(createGameContext(game));
+    gameService.getGameById.mockReturnValue(game);
     gameService.robarCarta.mockReturnValue({
       cartaRobada: {
         carta: 4,
@@ -256,14 +277,19 @@ describe('GameGateway', () => {
       'game:carta-robada',
       expect.objectContaining({ partidaId: 'G1' }),
     );
-    expect(emitByTarget['socket-1']).toHaveBeenCalledWith('game:decision-requerida', {
-      gameId: 'G1',
-    });
+    expect(emitByTarget['socket-1']).toHaveBeenCalledWith(
+      'game:decision-requerida',
+      expect.objectContaining({
+        gameId: 'G1',
+        game: expect.objectContaining({ carta: 4 }),
+      }),
+    );
   });
 
   it('robarCarta emite mazo-rebarajado cuando aplica', () => {
     const game = createGame();
     gameService.validateGameContext.mockReturnValue(createGameContext(game));
+    gameService.getGameById.mockReturnValue(game);
     gameService.robarCarta.mockReturnValue({
       cartaRobada: {
         carta: 4,
@@ -294,7 +320,12 @@ describe('GameGateway', () => {
     };
 
     gameService.validateGameContext.mockReturnValue(createGameContext(game));
-    gameService.descartarPendiente.mockReturnValue(carta);
+    gameService.descartarPendiente.mockReturnValue({
+      cartaDescartada: carta,
+      resultadoHabilidad: {
+        tipo: 'ninguna',
+      },
+    } as any);
 
     const result = gateway.descartarPendiente(client as Socket, { gameId: 'G1' });
 
@@ -343,5 +374,193 @@ describe('GameGateway', () => {
     await expect(
       gateway.guardarYCerrarPartida(client as Socket, { gameId: 'G1' }),
     ).rejects.toBeInstanceOf(WsException);
+  });
+
+  it('flushBotActions ejecuta accion de bot cuando el turno actual es bot', () => {
+    const game = createGame();
+    game.estadoGlobal.turn = 0;
+    game.estadoGlobal.turnoJugadores = ['bot-1', 'u2'];
+    game.estadoGlobal.jugadores[0] = {
+      cartasMano: [],
+      habilidadesActivadas: [],
+      saltarTurno: false,
+      controlador: 'bot',
+      dificultadBot: 'facil',
+    } as any;
+    game.estadoGlobal.jugadores[1] = {
+      cartasMano: [],
+      habilidadesActivadas: [],
+      saltarTurno: false,
+      controlador: 'humano',
+    } as any;
+
+    gameService.getGameById.mockReturnValue(game);
+    gameService.getBotDecisionContext.mockReturnValue(null);
+    gameService.robarCarta.mockReturnValue({
+      cartaRobada: {
+        carta: 4,
+        palo: 'corazones',
+        habilidad: 'ninguna',
+        puntos: 4,
+        protegida: false,
+      },
+      reshuffle: { huboRebarajado: false, cantidadCartasMazo: 20 },
+    });
+    botsService.decidirAccion
+      .mockReturnValueOnce({ accion: 'robar' } as any)
+      .mockReturnValueOnce({ accion: 'esperar' } as any);
+
+    (gateway as any).flushBotActions('G1');
+
+    expect(botsService.decidirAccion).toHaveBeenCalledWith(
+      game,
+      'bot-1',
+      'facil',
+      null,
+    );
+    expect(gameService.robarCarta).toHaveBeenCalledWith(game, 'bot-1');
+    expect(emitByTarget.ROOM1).toHaveBeenCalledWith('game:bot-roba-carta', {
+      gameId: 'G1',
+      botId: 'bot-1',
+    });
+  });
+
+  it('scheduleBotProcessing agenda un unico flush por partida aunque se invoque varias veces', () => {
+    jest.useFakeTimers();
+
+    const game = createGame();
+    const flushSpy = jest.spyOn(gateway as any, 'flushBotActions').mockImplementation(() => {});
+
+    (gateway as any).scheduleBotProcessing(game);
+    (gateway as any).scheduleBotProcessing(game);
+    (gateway as any).scheduleBotProcessing(game);
+
+    jest.runOnlyPendingTimers();
+
+    expect(flushSpy).toHaveBeenCalledTimes(1);
+
+    flushSpy.mockRestore();
+    jest.useRealTimers();
+  });
+
+  it('integracion bot: encadena turnos bot y se detiene al llegar a humano', () => {
+    jest.useFakeTimers();
+
+    const game = createGame();
+    game.estadoGlobal.turn = 0;
+    game.estadoGlobal.phase = 'WAIT_DRAW';
+    game.estadoGlobal.turnoJugadores = ['bot-1', 'bot-2', 'u1'];
+    game.estadoGlobal.jugadores = [
+      {
+        cartasMano: [],
+        habilidadesActivadas: [],
+        saltarTurno: false,
+        controlador: 'bot',
+        dificultadBot: 'facil',
+      } as any,
+      {
+        cartasMano: [],
+        habilidadesActivadas: [],
+        saltarTurno: false,
+        controlador: 'bot',
+        dificultadBot: 'media',
+      } as any,
+      {
+        cartasMano: [],
+        habilidadesActivadas: [],
+        saltarTurno: false,
+        controlador: 'humano',
+      } as any,
+    ];
+
+    gameService.getGameById.mockImplementation(() => game);
+    gameService.getBotDecisionContext.mockReturnValue(null);
+
+    gameService.robarCarta.mockImplementation((partida: Game) => {
+      const idx = partida.estadoGlobal.turn;
+      (partida.estadoGlobal.jugadores[idx] as any).cartaPendiente = {
+        carta: 4,
+        palo: 'corazones',
+        habilidad: 'ninguna',
+        puntos: 4,
+        protegida: false,
+      };
+      partida.estadoGlobal.phase = 'WAIT_DECISION';
+      return {
+        cartaRobada: {
+          carta: 4,
+          palo: 'corazones',
+          habilidad: 'ninguna',
+          puntos: 4,
+          protegida: false,
+        },
+        reshuffle: { huboRebarajado: false, cantidadCartasMazo: 20 },
+      };
+    });
+
+    gameService.descartarPendiente.mockImplementation((partida: Game) => {
+      const idx = partida.estadoGlobal.turn;
+      delete (partida.estadoGlobal.jugadores[idx] as any).cartaPendiente;
+      partida.estadoGlobal.phase = 'WAIT_DRAW';
+      partida.estadoGlobal.turn =
+        (partida.estadoGlobal.turn + 1) % partida.estadoGlobal.turnoJugadores.length;
+      return {
+        cartaDescartada: {
+          carta: 4,
+          palo: 'corazones',
+          habilidad: 'ninguna',
+          puntos: 4,
+          protegida: false,
+        },
+        resultadoHabilidad: { tipo: 'ninguna' },
+      } as any;
+    });
+
+    botsService.decidirAccion.mockImplementation((partida: Game) => {
+      return partida.estadoGlobal.phase === 'WAIT_DRAW'
+        ? ({ accion: 'robar' } as any)
+        : ({ accion: 'descartar-pendiente' } as any);
+    });
+
+    (gateway as any).scheduleBotProcessing(game);
+
+    let guard = 0;
+    while (jest.getTimerCount() > 0 && guard < 10) {
+      jest.runOnlyPendingTimers();
+      guard++;
+    }
+
+    expect(guard).toBeGreaterThan(0);
+    expect(gameService.robarCarta.mock.calls.map((c) => c[1])).toEqual([
+      'bot-1',
+      'bot-2',
+    ]);
+    expect(gameService.descartarPendiente.mock.calls.map((c) => c[1])).toEqual([
+      'bot-1',
+      'bot-2',
+    ]);
+    expect(game.estadoGlobal.turn).toBe(2);
+    expect(game.estadoGlobal.turnoJugadores[game.estadoGlobal.turn]).toBe('u1');
+
+    jest.useRealTimers();
+  });
+
+  it('flushBotActions no ejecuta acciones cuando el turno es de humano', () => {
+    const game = createGame();
+    game.estadoGlobal.turn = 0;
+    game.estadoGlobal.turnoJugadores = ['u1', 'u2'];
+    game.estadoGlobal.jugadores[0] = {
+      cartasMano: [],
+      habilidadesActivadas: [],
+      saltarTurno: false,
+      controlador: 'humano',
+    } as any;
+
+    gameService.getGameById.mockReturnValue(game);
+
+    (gateway as any).flushBotActions('G1');
+
+    expect(botsService.decidirAccion).not.toHaveBeenCalled();
+    expect(gameService.robarCarta).not.toHaveBeenCalled();
   });
 });

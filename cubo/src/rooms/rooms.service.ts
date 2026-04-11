@@ -1,5 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { PublicRoomSummary, RoomState } from './interfaces/room.interface';
+import {
+  dificultadBot,
+  playerController,
+  PublicRoomSummary,
+  RoomState,
+} from './interfaces/room.interface';
 import { CreateRoomInput, RoomManager } from './room.manager';
 
 @Injectable()
@@ -32,6 +37,26 @@ export class RoomsService {
 
   handleDisconnect(userId: string) {
     return this.roomManager.handleDisconnect(userId);
+  }
+
+  marcarJugadorDesconectado(userId: string) {
+    return this.roomManager.marcarJugadorDesconectado(userId);
+  }
+
+  cambiarControladorJugador(
+    userId: string,
+    controlador: playerController,
+    dificultad?: dificultadBot,
+  ) {
+    return this.roomManager.cambiarControladorJugador(
+      userId,
+      controlador,
+      dificultad,
+    );
+  }
+
+  desvincularUsuarioDeSalaActiva(userId: string) {
+    return this.roomManager.desvincularUsuarioDeSalaActiva(userId);
   }
 
   handleReconnect(userId: string, socketId: string) {

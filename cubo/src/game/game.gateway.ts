@@ -8,10 +8,13 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
+import { OnModuleDestroy } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { GameService } from './game.service';
+import { BotsService } from '../bots/bots.service';
 import { FinPartidaMotivo, Game } from './interfaces/game.interface';
-import { Card, Habilidad } from './interfaces/card.interface';
+import { Card } from './interfaces/card.interface';
+import { dificultadBot } from '../rooms/interfaces/room.interface';
 import {
   HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE,
   SIN_CARTAS_ERROR_MESSAGE,
@@ -92,6 +95,23 @@ interface guardarYCerrarPayload {
   gameId: string;
 }
 
+interface abandonarPartidaPayload {
+  gameId: string;
+  dificultadBot?: dificultadBot;
+}
+
+interface prepararIntercabioCartaPayload {
+  gameId: string,
+  numCartaJugador: number,
+  rivalId: string,
+}
+
+interface intercambiarCartaInteractivo {
+  gameId: string,
+  numCartaJugador: number,
+  rivalId: string,
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -100,14 +120,18 @@ interface guardarYCerrarPayload {
 })
 //Se ha preguntado a chatGPT cual es la mejor manera de implementar el ticker
 //De ahi se ha sacado la idea de implementar OnGateway
-export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
+export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModuleDestroy {
   @WebSocketServer()
   server!: Server;
 
   private timeoutTicker?: NodeJS.Timeout;
+  private readonly queuedBotGames = new Set<string>();
+  private readonly processingBotGames = new Set<string>();
+  private static readonly MAX_BOT_ACTIONS_PER_FLUSH = 32;
 
   constructor(
     private readonly gameService: GameService,
+    private readonly botsService: BotsService,
   ) {}
 
   afterInit(): void {
@@ -116,17 +140,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
     }, 1000);
   }
 
-  handleDisconnect(): void {
-    // Hook required by lifecycle interface; socket-level disconnect is handled in RoomsGateway.
+  handleDisconnect(_client: Socket): void {
   }
 
   onModuleDestroy(): void {
-    if (!this.timeoutTicker) {
-      return;
+    if (this.timeoutTicker) {
+      clearInterval(this.timeoutTicker);
+      this.timeoutTicker = undefined;
     }
-
-    clearInterval(this.timeoutTicker);
-    this.timeoutTicker = undefined;
   }
 
   private procesarTimeoutsTurno() {
@@ -143,17 +164,407 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         });
 
         this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
       }
     } catch {
       // Never throw inside ticker; game actions keep reporting detailed errors.
     }
   }
 
+  private scheduleBotProcessing(partida: Game) {
+    if (partida.estado !== 'activo') {
+      return;
+    }
+
+    const gameId = partida.gameId;
+    if (
+      this.processingBotGames.has(gameId) ||
+      this.queuedBotGames.has(gameId)
+    ) {
+      return;
+    }
+
+    this.queuedBotGames.add(gameId);
+
+    setTimeout(() => {
+      this.queuedBotGames.delete(gameId);
+      this.flushBotActions(gameId);
+    }, 0);
+  }
+
+  private flushBotActions(gameId: string) {
+    if (this.processingBotGames.has(gameId)) {
+      return;
+    }
+
+    this.processingBotGames.add(gameId);
+    let shouldReschedule = false;
+
+    try {
+      for ( 
+        let accionesProcesadas = 0;
+        accionesProcesadas < GameGateway.MAX_BOT_ACTIONS_PER_FLUSH;
+        accionesProcesadas++
+      ) {
+        const partida = this.gameService.getGameById(gameId);
+        if (partida.estado !== 'activo') {
+          return;
+        }
+
+        const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
+        const estadoTurnoActual =
+          partida.estadoGlobal.jugadores[partida.estadoGlobal.turn];
+        if (estadoTurnoActual.controlador !== 'bot') {
+          return;
+        }
+
+        const difficulty = estadoTurnoActual.dificultadBot ?? 'facil';
+        const contexto = this.gameService.getBotDecisionContext(
+          partida.gameId,
+          turnoActualId,
+        );
+
+        const accion = this.botsService.decidirAccion(
+          partida,
+          turnoActualId,
+          difficulty,
+          contexto,
+        );
+
+        const actionApplied = this.ejecutarAccionBot(
+          partida,
+          turnoActualId,
+          accion,
+        );
+        if (!actionApplied) {
+          return;
+        }
+      }
+
+      shouldReschedule = true;
+    } catch (error) {
+      console.error('Error en flushBotActions:', error);
+    } finally {
+      this.processingBotGames.delete(gameId);
+    }
+
+    if (!shouldReschedule) {
+      return;
+    }
+
+    let partida: Game;
+    try {
+      partida = this.gameService.getGameById(gameId);
+    } catch {
+      return;
+    }
+    if (partida.estado !== 'activo') {
+      return;
+    }
+
+    const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
+    const estadoTurnoActual = partida.estadoGlobal.jugadores[partida.estadoGlobal.turn];
+    if (estadoTurnoActual.controlador === 'bot') {
+      this.scheduleBotProcessing(partida);
+    }
+  }
+
+  /**
+   * Ejecuta una acción de bot y emite los eventos correspondientes
+   */
+  private ejecutarAccionBot(
+    partida: Game,
+    botId: string,
+    accion: any, // BotAction
+  ): boolean {
+    try {
+      switch (accion.accion) {
+        case 'robar':
+          return this.ejecutarRobarBot(partida, botId);
+        case 'descartar-pendiente':
+          return this.ejecutarDescartarPendienteBot(partida, botId);
+        case 'carta-por-pendiente':
+          return this.ejecutarCartaPorPendienteBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+          );
+        case 'ver-carta':
+          return this.ejecutarVerCartaBot(partida, botId, accion.cartaIndex);
+        case 'ver-carta-propia-y-rival':
+          return this.ejecutarVerCartaPropiaYRivalBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+            accion.targetUserId,
+            accion.cartaIndexTarget,
+          );
+        case 'intercambiar-carta':
+          return this.ejecutarIntercambiarCartaBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+            accion.targetUserId,
+            accion.cartaIndexTarget,
+          );
+        case 'intercambiar-todas-cartas':
+          return this.ejecutarIntercambiarTodasCartasBot(
+            partida,
+            botId,
+            accion.targetUserId,
+          );
+        case 'hacer-robar-carta':
+          return this.ejecutarHacerRobarCartaBot(
+            partida,
+            botId,
+            accion.targetUserId,
+          );
+        case 'proteger-carta':
+          return this.ejecutarProtegerCartaBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+          );
+        case 'saltar-turno-jugador':
+          return this.ejecutarSaltarTurnoJugadorBot(
+            partida,
+            botId,
+            accion.targetUserId,
+          );
+        case 'jugador-menos-puntuacion':
+          return this.ejecutarJugadorMenosPuntuacionBot(partida, botId);
+        case 'esperar':
+          return false;
+        default:
+          return false;
+      }
+    } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      if (this.esErrorHabilidadDenegada(error) && partida) {
+        this.notificarTodosHabilidadDenegada(partida, botId, accion.accion);
+        this.finalizarPartidaYSincronizarSala(partida);
+      }
+      console.error(
+        `Error ejecutando acción bot ${botId} (${accion.accion}):`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * El bot roba una carta
+   */
+  private ejecutarRobarBot(partida: Game, botId: string): boolean {
+    const resultado = this.gameService.robarCarta(partida, botId);
+
+    if (resultado.reshuffle.huboRebarajado) {
+      this.notificarTodosRebarajado(partida);
+    }
+
+    this.notificarTodosCartaRobada(partida);
+    this.server.to(partida.roomId).emit('game:bot-roba-carta', {
+      gameId: partida.gameId,
+      botId,
+    });
+    return true;
+  }
+
+  /**
+   * El bot descarta la carta pendiente
+   */
+  private ejecutarDescartarPendienteBot(partida: Game, botId: string): boolean {
+    const resultado = this.gameService.descartarPendiente(partida, botId);
+
+    this.finalizarPartidaYSincronizarSala(partida);
+
+    if (resultado.resultadoHabilidad.tipo === 'roba-y-sigue') {
+      this.notificarTodosCartaRobada(partida);
+    }
+
+    this.notificarTodosDescartarPendiente(partida, resultado.cartaDescartada);
+    this.server.to(partida.roomId).emit('game:bot-descarta-pendiente', {
+      gameId: partida.gameId,
+      botId,
+    });
+    return true;
+  }
+
+  /**
+   * El bot intercambia una carta de mano por la pendiente
+   */
+  private ejecutarCartaPorPendienteBot(
+    partida: Game,
+    botId: string,
+    cartaIndex: number,
+  ): boolean {
+    const carta = this.gameService.cartaPorPendiente(partida, cartaIndex, botId);
+
+    this.finalizarPartidaYSincronizarSala(partida);
+
+    this.notificarTodosDescartarPendiente(partida, carta);
+    this.server.to(partida.roomId).emit('game:bot-intercambia-cartas', {
+      gameId: partida.gameId,
+      botId,
+    });
+    return true;
+  }
+
+  private ejecutarVerCartaBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+  ): boolean {
+    if (cartaIndex == null) {
+      return false;
+    }
+
+    this.gameService.verCarta(partida, botId, cartaIndex);
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosBotVerCarta(partida, botId, cartaIndex);
+    return true;
+  }
+
+  private ejecutarVerCartaPropiaYRivalBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+    rivalId?: string,
+    cartaIndexRival?: number,
+  ): boolean {
+    if (cartaIndex == null || rivalId == null || cartaIndexRival == null) {
+      return false;
+    }
+
+    this.gameService.verCarta(
+      partida,
+      botId,
+      cartaIndex,
+      rivalId,
+      cartaIndexRival,
+    );
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosBotVerCartaPropiaYRival(
+      partida,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    );
+    return true;
+  }
+
+  private ejecutarIntercambiarCartaBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+    rivalId?: string,
+    cartaIndexRival?: number,
+  ): boolean {
+    if (cartaIndex == null || rivalId == null || cartaIndexRival == null) {
+      return false;
+    }
+
+    this.gameService.intercambiarCartaBot(
+      partida,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    );
+    this.notificarTodosCambioCartas(
+      partida,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    );
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  private ejecutarIntercambiarTodasCartasBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+  ): boolean {
+    if (rivalId == null) {
+      return false;
+    }
+
+    this.gameService.intercambiarTodasCartas(partida, botId, rivalId);
+    this.notificarTodosCambioCartas(partida, botId, rivalId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  private ejecutarHacerRobarCartaBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+  ): boolean {
+    if (rivalId == null) {
+      return false;
+    }
+
+    this.gameService.hacerRobarCarta(partida, botId, rivalId);
+    this.notificarTodosHacerRobarCarta(partida, botId, rivalId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  private ejecutarProtegerCartaBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+  ): boolean {
+    if (cartaIndex == null) {
+      return false;
+    }
+
+    this.gameService.protegerCarta(partida, botId, cartaIndex);
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosCartaProtegida(partida, botId, cartaIndex);
+    return true;
+  }
+
+  private ejecutarSaltarTurnoJugadorBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+  ): boolean {
+    if (rivalId == null) {
+      return false;
+    }
+
+    this.gameService.saltarTurnoJugador(partida, botId, rivalId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    this.notificarTodosTurnoJugadorSaltado(partida, botId, rivalId);
+    return true;
+  }
+
+  private ejecutarJugadorMenosPuntuacionBot(partida: Game, botId: string): boolean {
+    const jugadorId = this.gameService.jugadorMenosPuntuacion(partida, botId);
+    this.server.to(partida.roomId).emit('game:bot-jugador-menos-puntuacion', {
+      gameId: partida.gameId,
+      botId,
+      jugadorId,
+    });
+    return true;
+  }
+
   private notificarTodosCartaRobada(partida : Game ){
+    
+    const cartasRestantes = partida.estadoGlobal.cartasVigentes.length;
+
     this.server.to(partida.roomId).emit('game:carta-robada',{
       partidaId : partida.gameId,
       jugadorRobado: partida.estadoGlobal.turn,
+      cartasRestantes: cartasRestantes,
     });
+
   }
  
   private notificarTodosDescartarPendiente(partida : Game, carta: Card){
@@ -163,20 +574,53 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
     });
   }
 
+  private serializarJugadoresPartida(partida: Game) {
+    return partida.estadoGlobal.turnoJugadores.map((userId, index) => {
+      const jugador = partida.estadoGlobal.jugadores[index];
+      return {
+        userId,
+        controlador: jugador.controlador,
+        dificultadBot: jugador.dificultadBot,
+        nombreEnPartida: jugador.nombreEnPartida,
+      };
+    });
+  }
 
   private notificarTodosComienzoPartida(partida: Game){
+
     this.server.to(partida.roomId).emit('game:inicio-partida',{
       partidaId : partida.gameId,
+      jugadores: partida.estadoGlobal.turnoJugadores,
+      jugadoresDetalle: this.serializarJugadoresPartida(partida),
+    });
+  }
+
+  private notificarTodosCambioControladorJugador(
+    partida: Game,
+    userId: string,
+    controlador: 'humano' | 'bot',
+    dificultadBot?: string,
+    nombreEnPartida?: string,
+  ) {
+    this.server.to(partida.roomId).emit('game:player-controller-changed', {
+      gameId: partida.gameId,
+      userId,
+      controlador,
+      dificultadBot,
+      nombreEnPartida,
     });
   }
 
   private notificarTodosCambioCartas(partida: Game, idRemitente: string,
-    idDestinatario: string
+    idDestinatario: string , numCartaRemitente?: number, 
+    numCartaDestinatario?: number
   ){
      this.server.to(partida.roomId).emit('game:intercambio-cartas',{
       partidaId : partida.gameId,
       remitente: idRemitente,
       destinatario: idDestinatario,
+      numCartaRemitente : numCartaRemitente,
+      numCartaDestinatario : numCartaDestinatario,
     });
   }
 
@@ -199,6 +643,58 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
       gameId: partida.gameId,
       jugadorId,
       habilidad,
+    });
+  }
+
+  private notificarTodosBotVerCarta(
+    partida: Game,
+    botId: string,
+    cartaIndex: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:bot-ver-carta', {
+      gameId: partida.gameId,
+      botId,
+      cartaIndex,
+    });
+  }
+
+  private notificarTodosBotVerCartaPropiaYRival(
+    partida: Game,
+    botId: string,
+    rivalId: string,
+    cartaIndex: number,
+    cartaIndexRival: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:bot-ver-carta-propia-y-rival', {
+      gameId: partida.gameId,
+      botId,
+      rivalId,
+      cartaIndex,
+      cartaIndexRival,
+    });
+  }
+
+  private notificarTodosCartaProtegida(
+    partida: Game,
+    jugadorId: string,
+    cartaIndex: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:carta-protegida', {
+      gameId: partida.gameId,
+      jugadorId,
+      cartaIndex,
+    });
+  }
+
+  private notificarTodosTurnoJugadorSaltado(
+    partida: Game,
+    remitenteId: string,
+    destinatarioId: string,
+  ) {
+    this.server.to(partida.roomId).emit('game:turno-jugador-saltado', {
+      gameId: partida.gameId,
+      remitenteId,
+      destinatarioId,
     });
   }
   
@@ -311,7 +807,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
             client.id,
           )
         : this.gameService.inicioPartida(room);
+
       this.notificarTodosComienzoPartida(partida);
+      this.scheduleBotProcessing(partida);
 
       return{
         success: true,
@@ -346,6 +844,49 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         success: true,
         gameId: resultado.gameId,
         roomCode: resultado.roomCode,
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:abandonar-partida')
+  abandonarPartida(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: abandonarPartidaPayload,
+  ) {
+    try {
+      const { partida, userId } = this.getValidatedGameContext(client, payload.gameId);
+      const resultado = this.gameService.abandonarPartidaConBot(
+        partida,
+        userId,
+        payload.dificultadBot ?? 'media',
+      );
+
+      if (!resultado) {
+        throw new Error('No se ha podido sustituir al jugador por un bot');
+      }
+
+      this.notificarTodosCambioControladorJugador(
+        resultado.partida,
+        resultado.userId,
+        resultado.controlador,
+        resultado.dificultadBot,
+        resultado.nombreEnPartida,
+      );
+
+      if (resultado.roomState) {
+        this.server.to(resultado.partida.roomId).emit('room:update', resultado.roomState);
+      }
+
+      client.leave(resultado.partida.roomId);
+      this.scheduleBotProcessing(resultado.partida);
+
+      return {
+        success: true,
+        gameId: resultado.partida.gameId,
+        userId: resultado.userId,
+        controlador: resultado.controlador,
       };
     } catch (error) {
       this.handleWsError(error);
@@ -388,10 +929,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         this.notificarTodosRebarajado(partida);
       }
 
+
       this.notificarTodosCartaRobada(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
         gameId : payload.gameId,
+        game: resultado.cartaRobada,
       });
+      this.scheduleBotProcessing(partida);
+
       return {
         success: true,
       };
@@ -414,11 +959,23 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         payload.gameId,
       );
 
-      const cartaPendiente = this.gameService.descartarPendiente(partida,userId);
+      const resultado = this.gameService.descartarPendiente(partida,userId);
 
       this.finalizarPartidaYSincronizarSala(partida);
-      
-      this.notificarTodosDescartarPendiente(partida,cartaPendiente);
+
+      if(resultado.resultadoHabilidad.tipo === 'roba-y-sigue'){
+        /*implica que el jugador ha robado una carta resultante de la acción
+        de descartar un 6*/
+        this.server.to(client.id).emit('game:carta-robada-por-descartar-6', {
+          gameId: payload.gameId,
+          cartaRobada: resultado.resultadoHabilidad.cartaRobada,
+          reshuffle: resultado.resultadoHabilidad.reshuffle,
+        });
+        this.notificarTodosCartaRobada(partida);
+      }
+
+      this.notificarTodosDescartarPendiente(partida,resultado.cartaDescartada);
+      this.scheduleBotProcessing(partida);
       return {
         success: true,
         gameId: partida.gameId,
@@ -448,6 +1005,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
       this.finalizarPartidaYSincronizarSala(partida);
 
       this.notificarTodosDescartarPendiente(partida, carta);
+      this.scheduleBotProcessing(partida);
       return {
         success: true,
         gameId: partida.gameId,
@@ -468,11 +1026,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         payload.gameId,
       );
 
-      this.gameService.intercambiarCarta(partida, remitenteId,
+      const resultado = this.gameService.intercambiarCarta(partida, remitenteId,
         payload.destinatarioId, payload.numCartaRemitente, 
         payload.numCartaDestinatario);
-      this.notificarTodosCambioCartas(partida,remitenteId, 
-        payload.destinatarioId);
+
+        this.notificarTodosCambioCartas(partida,remitenteId, payload.destinatarioId
+        ,payload.numCartaRemitente, payload.numCartaDestinatario);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -515,6 +1075,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         carta: resultado.cartaPropia,
         cartaJugadorContrario: resultado.cartaRival,
       });
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -551,6 +1112,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         payload.destinatarioId);
       this.notificarTodosCambioCartas(partida,remitenteId, 
         payload.destinatarioId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -583,6 +1145,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
       
       this.notificarTodosHacerRobarCarta(partida,remitenteId, 
         payload.adversarioId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -624,6 +1187,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
 
       this.gameService.protegerCarta(partida, remitenteId,
         payload.numCarta);
+      this.notificarTodosCartaProtegida(partida, remitenteId, payload.numCarta);
+      this.scheduleBotProcessing(partida);
   
       return {
         success: true,
@@ -695,6 +1260,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
         gameId: payload.gameId,
         jugadorId: jugadorId,
       });
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -731,6 +1297,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
       );
 
       this.gameService.desactivarProximaHabilidad(partida, userId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
@@ -803,11 +1370,101 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect {
       //carta más o una menos
       this.notificarTodosAccionCartaSobreOtra(partida, resultado.numCartas,
         contexto.userId);
+      this.scheduleBotProcessing(partida);
 
       return {
         success: true,
         gameId: payload.gameId,
         //TODO: revisar el payload
+      };
+    } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:preparar-intercambio-carta')
+  prepararIntercambioCarta(
+    @ConnectedSocket() client : Socket,
+    @MessageBody() payload: prepararIntercabioCartaPayload,
+  ){
+    let partida: Game | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      partida = contexto.partida;
+
+      const correcto = this.gameService.prepararIntercabioCarta(
+        partida,
+        contexto.userId,
+        payload.rivalId,
+        payload.numCartaJugador
+      );
+
+      this.finalizarPartidaYSincronizarSala(partida);
+
+      if(correcto){
+        /*se puede notificar al otro jugador para que efectue su parte de la 
+        acción*/
+        this.server.to(payload.rivalId).emit('game:intercambio-rival',{
+          gameId: payload.gameId,
+          usuarioIniciador: contexto.userId,
+        });
+      } 
+      this.scheduleBotProcessing(partida);
+
+      return {
+        success: true,
+        gameId: payload.gameId,
+      };
+    } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      this.handleWsError(error);
+    }
+  }
+  
+   @SubscribeMessage('game:preparar-intercambio-carta')
+  intercambiarCartaInteractivo(
+    @ConnectedSocket() client : Socket,
+    @MessageBody() payload: intercambiarCartaInteractivo,
+  ){
+    let partida: Game | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+
+      partida = contexto.partida;
+
+      const correcto = this.gameService.intercambiarCartaInteractivo(
+        partida,
+        contexto.userId,
+        payload.rivalId,
+        payload.numCartaJugador
+      );
+
+      this.finalizarPartidaYSincronizarSala(partida);
+
+      if(correcto){
+        /*se puede notificar al otro jugador para que efectue su parte de la 
+        acción*/
+        this.notificarTodosCambioCartas(partida,payload.rivalId,contexto.userId);
+      }
+      this.scheduleBotProcessing(partida);
+
+      return {
+        success: true,
+        gameId: payload.gameId,
       };
     } catch (error) {
       if (this.esErrorSinCartas(error) && partida) {

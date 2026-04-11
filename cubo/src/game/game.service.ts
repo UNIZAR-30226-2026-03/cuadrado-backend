@@ -1,15 +1,16 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  EstadoInicialJugador,
   GameManager,
   PersistedGameState,
+  PermisoHabilidad,
   ResultadoPonerCartaSobreOtra,
   ResultadoRobarCarta,
 } from './game.manager';
 import { Game } from './interfaces/game.interface';
-import { Room } from '../rooms/interfaces/room.interface';
+import { dificultadBot, Room, RoomState } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
 import { RoomsService } from '../rooms/rooms.service';
-import { RoomState } from '../rooms/interfaces/room.interface';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface ValidatedGameContext {
@@ -30,6 +31,15 @@ export interface SavedGameSummary {
   players: string[];
 }
 
+export interface ResultadoSustitucionBot {
+  partida: Game;
+  roomState: RoomState | null;
+  userId: string;
+  controlador: 'bot';
+  dificultadBot: dificultadBot;
+  nombreEnPartida?: string;
+}
+
 @Injectable()
 export class GameService {
   constructor(
@@ -45,6 +55,18 @@ export class GameService {
     return this.gameManager.getGameByRoomId(roomId);
   }
 
+  getActiveGames(): Game[] {
+    return this.gameManager.getActiveGames();
+  }
+
+  getRoomState(roomCode: string): RoomState | null {
+    return this.roomsService.getRoomState(roomCode);
+  }
+
+  getBotDecisionContext(gameId: string, botId: string): PermisoHabilidad | null {
+    return this.gameManager.getBotDecisionContext(gameId, botId);
+  }
+
   resolverTimeoutsTurnoActivos(): Game[] {
     const partidasAfectadas: Game[] = [];
     const partidasActivas = this.gameManager.getActiveGames();
@@ -57,6 +79,52 @@ export class GameService {
     }
 
     return partidasAfectadas;
+  }
+
+  abandonarPartidaConBot(
+    partida: Game,
+    userId: string,
+    dificultad: dificultadBot = 'media',
+  ): ResultadoSustitucionBot | null {
+    const room = this.roomsService.getRoomByUserId(userId);
+    if (!room || !room.started || room.code !== partida.roomId) {
+      return null;
+    }
+
+    const player = room.players.get(userId);
+    if (!player || player.controlador === 'bot') {
+      return null;
+    }
+
+    this.roomsService.marcarJugadorDesconectado(userId);
+
+    const playerActualizado = this.roomsService.cambiarControladorJugador(
+      userId,
+      'bot',
+      dificultad,
+    );
+    if (!playerActualizado) {
+      return null;
+    }
+
+    this.gameManager.cambiarControladorJugador(
+      partida,
+      userId,
+      'bot',
+      playerActualizado.dificultadBot,
+      playerActualizado.nombreEnPartida,
+    );
+
+    this.roomsService.desvincularUsuarioDeSalaActiva(userId);
+
+    return {
+      partida,
+      roomState: this.roomsService.getRoomState(room.code),
+      userId,
+      controlador: 'bot',
+      dificultadBot: playerActualizado.dificultadBot ?? dificultad,
+      nombreEnPartida: playerActualizado.nombreEnPartida,
+    };
   }
 
   async guardarYcerrarPartida(game: Game, hostUserId: string): Promise<{
@@ -183,7 +251,7 @@ export class GameService {
     }
 
     const allConnected = Array.from(room.players.values()).every(
-      (player) => player.connected,
+      (player) => player.connected || player.controlador === 'bot',
     );
     if (!allConnected) {
       throw new Error('Todos los jugadores deben estar conectados para cargar la partida');
@@ -196,6 +264,9 @@ export class GameService {
       discardedCards: snapshot.discardedCards,
       players: playersGuardados.map((player) => ({
         userId: player.userId,
+        controlador: room.players.get(player.userId)?.controlador ?? 'humano',
+        dificultadBot: room.players.get(player.userId)?.dificultadBot,
+        nombreEnPartida: room.players.get(player.userId)?.nombreEnPartida,
         turnOrder: player.turnOrder,
         cards: player.cards,
         habilidades: player.habilidades,
@@ -280,17 +351,18 @@ export class GameService {
   }
 
   inicioPartida(room: Room): Game {
-    const playerUserIds = Array.from(room.players.values()).map(
-      (player) => player.userId,
-    );
+    const jugadoresIniciales: EstadoInicialJugador[] = Array.from(
+      room.players.values(),
+    ).map((player) => ({
+      userId: player.userId,
+      controlador: player.controlador,
+      dificultadBot: player.dificultadBot,
+      nombreEnPartida: player.nombreEnPartida,
+    }));
 
     room.started = true;
 
-    return this.gameManager.inicioPartida(
-      room.players.size,
-      room.code,
-      playerUserIds,
-    );
+    return this.gameManager.inicioPartida(room.code, jugadoresIniciales);
   }
 
   robarCarta(partida: Game, userId: string): ResultadoRobarCarta {
@@ -300,6 +372,7 @@ export class GameService {
   descartarPendiente(partida : Game, userId: string) {
     return this.gameManager.descartarCartaPendiente(partida,userId);
   }
+  
   cartaPorPendiente(partida: Game, numCarta: number, userId: string){
     return this.gameManager.descartarCartaPorPendiente(
       partida, 
@@ -314,6 +387,22 @@ export class GameService {
         partida, remitenteId, destinatarioId, numCartaRemitente,
         numCartaDestinatario
       );
+  }
+
+  intercambiarCartaBot(
+    partida: Game,
+    remitenteId: string,
+    destinatarioId: string,
+    numCartaRemitente: number,
+    numCartaDestinatario: number,
+  ) {
+    return this.gameManager.intercambiarCartaBot(
+      partida,
+      remitenteId,
+      destinatarioId,
+      numCartaRemitente,
+      numCartaDestinatario,
+    );
   }
 
   verCarta(partida: Game, solicitanteId : string, indexCarta: number, playerId?: string
@@ -334,6 +423,10 @@ export class GameService {
 
   protegerCarta(partida : Game, userId: string, numCarta : number) {
     this.gameManager.protegerCarta(partida,userId,numCarta);
+  }
+
+  saltarTurnoJugador(partida: Game, userId: string, adversarioId: string) {
+    return this.gameManager.saltarTurnoJugador(partida, userId, adversarioId);
   }
 
   jugadorMenosPuntuacion(partida: Game, userId: string) {
@@ -371,6 +464,30 @@ export class GameService {
     numCarta :number,
   ): ResultadoPonerCartaSobreOtra {
     return this.gameManager.ponerCartaSobreOtra(partida, userId, numCarta);
+  }
+
+  prepararIntercabioCarta(
+    partida : Game,
+    userId : string,
+    rivalId : string,
+    numCartaJugador : number
+  ) : boolean {
+    return this.gameManager.
+      prepararIntercambioCarta(partida,userId,rivalId,numCartaJugador);
+  }
+
+  intercambiarCartaInteractivo(
+    partida: Game,
+    userId: string,
+    rivalId: string,
+    numCarta: number,
+  ) : boolean {
+    return this.gameManager.intercambiarCartaInteractivo(
+      partida,
+      userId,
+      rivalId,
+      numCarta,
+    );
   }
 
   calcularRecompensas(partida: Game) {
