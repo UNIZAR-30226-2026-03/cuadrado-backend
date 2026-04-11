@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { GameGateway } from './game.gateway';
 import { GameManager } from './game.manager';
 import { GameService } from './game.service';
@@ -6,7 +6,7 @@ import { RoomsModule } from '../rooms/rooms.module';
 import { BotsModule } from '../bots/bots.module';
 
 @Module({
-  imports: [RoomsModule, BotsModule],
+  imports: [forwardRef(() => RoomsModule), BotsModule],
   providers: [
     GameGateway,
     GameService,
@@ -15,6 +15,6 @@ import { BotsModule } from '../bots/bots.module';
       useFactory: () => new GameManager(),
     },
   ],
-  exports: [GameService],
+  exports: [GameService, GameGateway],
 })
 export class GameModule {}

@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   EstadoInicialJugador,
   GameManager,
@@ -10,6 +11,7 @@ import {
 import { Game } from './interfaces/game.interface';
 import { dificultadBot, Room, RoomState } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
+import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
 import { RoomsService } from '../rooms/rooms.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -27,8 +29,14 @@ export interface ValidatedStartContext {
 export interface SavedGameSummary {
   gameId: string;
   creatorId: string;
+  roomName: string;
   updatedAt: Date;
   players: string[];
+}
+
+export interface SavedRoomConfig {
+  roomName: string;
+  rules: RulesConfig;
 }
 
 export interface ResultadoSustitucionBot {
@@ -130,6 +138,7 @@ export class GameService {
   async guardarYcerrarPartida(game: Game, hostUserId: string): Promise<{
     roomCode: string;
     gameId: string;
+    savedRoomName: string;
   }> {
     const room = this.roomsService.getRoomByUserId(hostUserId);
     if (!room) {
@@ -147,11 +156,17 @@ export class GameService {
     const persisted = this.gameManager.exportarEstadoPersistido(game);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.gameState.upsert({
-        where: { name: persisted.gameId },
+      const snapshot = await tx.gameState.upsert({
+        where: {
+          creatorId_roomName: {
+            creatorId: hostUserId,
+            roomName: room.name,
+          },
+        },
         create: {
-          name: persisted.gameId,
           creatorId: hostUserId,
+          roomName: room.name,
+          roomRules: this.toPrismaJsonRules(room.rules),
           habilidadesActivadas: persisted.habilidadesActivadas,
           discardedCards: persisted.discardedCards,
           turn: persisted.turn,
@@ -159,6 +174,8 @@ export class GameService {
         },
         update: {
           creatorId: hostUserId,
+          roomName: room.name,
+          roomRules: this.toPrismaJsonRules(room.rules),
           habilidadesActivadas: persisted.habilidadesActivadas,
           discardedCards: persisted.discardedCards,
           turn: persisted.turn,
@@ -167,16 +184,19 @@ export class GameService {
       });
 
       await tx.pausedGamePlayer.deleteMany({
-        where: { roomId: persisted.gameId },
+        where: { gameStateId: snapshot.id },
       });
 
       await tx.pausedGamePlayer.createMany({
         data: persisted.players.map((player) => ({
-          roomId: persisted.gameId,
+          gameStateId: snapshot.id,
           userId: player.userId,
           turnOrder: player.turnOrder,
           cards: player.cards,
           habilidades: player.habilidades,
+          controlador: player.controlador,
+          dificultadBot: player.dificultadBot,
+          nombreEnPartida: player.nombreEnPartida,
         })),
       });
     });
@@ -191,6 +211,7 @@ export class GameService {
     return {
       roomCode: leaveResult.room.code,
       gameId: game.gameId,
+      savedRoomName: room.name,
     };
   }
 
@@ -202,8 +223,9 @@ export class GameService {
     });
 
     return partidas.map((partida) => ({
-      gameId: partida.name,
+      gameId: partida.id,
       creatorId: partida.creatorId,
+      roomName: this.requireRoomName(partida.roomName),
       updatedAt: partida.updatedAt,
       players: partida.pausedGamePlayers
         .sort((a, b) => a.turnOrder - b.turnOrder)
@@ -211,8 +233,36 @@ export class GameService {
     }));
   }
 
+  async getSavedRoomConfigByName(
+    creatorId: string,
+    roomName: string,
+  ): Promise<SavedRoomConfig | null> {
+    const normalizedName = roomName.trim();
+    if (!normalizedName) {
+      return null;
+    }
+
+    const snapshot = await this.prisma.gameState.findUnique({
+      where: {
+        creatorId_roomName: {
+          creatorId,
+          roomName: normalizedName,
+        },
+      },
+    });
+
+    if (!snapshot) {
+      return null;
+    }
+
+    return {
+      roomName: this.requireRoomName(snapshot.roomName),
+      rules: this.parseRulesConfig(snapshot.roomRules),
+    };
+  }
+
   async cargarPartidaGuardada(
-    gameId: string,
+    savedRoomName: string,
     hostUserId: string,
     socketId: string,
   ): Promise<Game> {
@@ -223,19 +273,58 @@ export class GameService {
     }
 
     const snapshot = await this.prisma.gameState.findUnique({
-      where: { name: gameId },
+      where: {
+        creatorId_roomName: {
+          creatorId: hostUserId,
+          roomName: savedRoomName,
+        },
+      },
       include: { pausedGamePlayers: true },
     });
 
     if (!snapshot) {
-      throw new Error('No existe una partida guardada con ese identificador');
+      throw new Error('No tienes una partida guardada con ese identificador');
     }
 
-    if (snapshot.creatorId !== hostUserId) {
-      throw new Error('No tienes permisos para cargar esta partida guardada');
-    }
+    room.rules = this.parseRulesConfig(snapshot.roomRules);
 
-    const playersGuardados = snapshot.pausedGamePlayers;
+    //he puesto aqui unas cuantas cosas para la carga de bots
+    const playersGuardados = snapshot.pausedGamePlayers.map((player) => ({
+      userId: player.userId,
+      turnOrder: player.turnOrder,
+      cards: player.cards,
+      habilidades: player.habilidades,
+      controlador: player.controlador as 'humano' | 'bot',
+      dificultadBot: player.dificultadBot as dificultadBot | undefined,
+      nombreEnPartida: player.nombreEnPartida ?? undefined,
+    }));
+
+    //porque aun guardamos por separado la dificultad. se podria cambiar pero bueno, por ahora se queda asi 
+    const dificultadBots = 
+      playersGuardados.find((player) => player.controlador === 'bot')
+        ?.dificultadBot ?? 'facil';
+
+    for (const player of playersGuardados) {
+      if (player.controlador !== 'bot') {
+        continue;
+      }
+
+      if (room.players.has(player.userId)) {
+        continue;
+      }
+
+      room.players.set(player.userId, {
+        userId: player.userId,
+        controlador: 'bot',
+        dificultadBot: player.dificultadBot ?? dificultadBots,
+        nombreEnPartida: player.nombreEnPartida,
+        idInRoom: room.players.size,
+        socketId: '',
+        isHost: false,
+        joinedAt: new Date(),
+        connected: true,
+      });
+    }
 
     const idsGuardados = new Set(playersGuardados.map((player) => player.userId));
     const idsSala = new Set(Array.from(room.players.keys()));
@@ -258,15 +347,14 @@ export class GameService {
     }
 
     const persisted: PersistedGameState = {
-      gameId: snapshot.name,
       turn: snapshot.turn,
       habilidadesActivadas: snapshot.habilidadesActivadas,
       discardedCards: snapshot.discardedCards,
       players: playersGuardados.map((player) => ({
         userId: player.userId,
-        controlador: room.players.get(player.userId)?.controlador ?? 'humano',
-        dificultadBot: room.players.get(player.userId)?.dificultadBot,
-        nombreEnPartida: room.players.get(player.userId)?.nombreEnPartida,
+        controlador: player.controlador,
+        dificultadBot: player.dificultadBot,
+        nombreEnPartida: player.nombreEnPartida,
         turnOrder: player.turnOrder,
         cards: player.cards,
         habilidades: player.habilidades,
@@ -510,6 +598,60 @@ export class GameService {
         },
       });
     }
+  }
+
+  private parseRulesConfig(rawRules: unknown): RulesConfig {
+    if (
+      typeof rawRules !== 'object' ||
+      rawRules === null ||
+      Array.isArray(rawRules)
+    ) {
+      throw new Error('Las reglas guardadas tienen un formato inválido');
+    }
+
+    const rules = rawRules as Partial<RulesConfig>;
+    const {
+      maxPlayers,
+      turnTimeSeconds,
+      isPrivate,
+      fillWithBots,
+    } = rules;
+
+    if (
+      typeof maxPlayers !== 'number' ||
+      typeof turnTimeSeconds !== 'number' ||
+      typeof isPrivate !== 'boolean' ||
+      typeof fillWithBots !== 'boolean'
+    ) {
+      throw new Error('Las reglas guardadas tienen un formato inválido');
+    }
+
+    return {
+      maxPlayers,
+      turnTimeSeconds,
+      isPrivate,
+      fillWithBots,
+    };
+  }
+
+  //Se ha preguntado a chatGPT como pasar un objeto a Json y ha enseñado las funciones de Prisma
+  private toPrismaJsonRules(rules: RulesConfig): Prisma.InputJsonValue {
+    return {
+      maxPlayers: rules.maxPlayers,
+      turnTimeSeconds: rules.turnTimeSeconds,
+      isPrivate: rules.isPrivate,
+      fillWithBots: rules.fillWithBots,
+    };
+  }
+
+  //estoy harto de poner esto hago funcion y ala
+  //typescript es pesadito
+  private requireRoomName(roomName: string | null): string {
+    if (!roomName) {
+      throw new Error('La partida guardada no contiene el nombre de sala');
+    }
+
+    return roomName;
   }
 
 }

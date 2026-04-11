@@ -88,7 +88,14 @@ interface cuboPayload {
 }
 
 interface iniciarPartidaPayload {
-  savedGameId?: string;
+  savedRoomName?: string;
+}
+
+interface iniciarPartidaResponse {
+  success: true;
+  gameId: string;
+  roomId: string;
+  loadedFromSave: boolean;
 }
 
 interface guardarYCerrarPayload {
@@ -781,11 +788,10 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
   //FIX: ahora se comprueba que el usuario que solicita iniciar la partida sea
   //el host de la misma.
-  @SubscribeMessage('game:iniciar-partida')
   async iniciarPartida(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() payload?: iniciarPartidaPayload,
-  ){
+    client: Socket,
+    payload?: iniciarPartidaPayload,
+  ): Promise<iniciarPartidaResponse> {
     try {
       const userId = this.getUserId(client);
       const { room } = this.gameService.validateStartContext(userId, client.id);
@@ -796,13 +802,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         throw new Error('Solo el host puede iniciar la partida');
       }
 
-      if (room.started) {
-        throw new Error('La sala ya está iniciada');
-      }
-
-      const partida = payload?.savedGameId
+      const partida = payload?.savedRoomName
         ? await this.gameService.cargarPartidaGuardada(
-            payload.savedGameId,
+            payload.savedRoomName,
             userId,
             client.id,
           )
@@ -815,7 +817,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         success: true,
         gameId: partida.gameId,
         roomId: partida.roomId,
-        loadedFromSave: Boolean(payload?.savedGameId),
+        loadedFromSave: Boolean(payload?.savedRoomName),
       }
     } catch (error) {
       this.handleWsError(error);
@@ -835,7 +837,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       this.server.to(resultado.roomCode).emit('room:closed', {
         reason: 'Host saved and closed the room',
         roomCode: resultado.roomCode,
-        savedGameId: resultado.gameId,
+        savedRoomName: resultado.savedRoomName,
       });
 
       this.server.in(resultado.roomCode).socketsLeave(resultado.roomCode);

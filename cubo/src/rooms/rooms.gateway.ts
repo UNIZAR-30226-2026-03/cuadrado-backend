@@ -8,19 +8,16 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
+import { Inject, forwardRef } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { RulesConfig } from './interfaces/rules-config.interface';
 import { RoomsService } from './rooms.service';
-
-interface SavedRoomPayload {
-  name: string;
-  rules: RulesConfig;
-}
+import { GameService } from '../game/game.service';
+import { GameGateway } from '../game/game.gateway';
 
 interface CreateRoomPayload {
   name?: string;
-  rules?: RulesConfig;
-  savedRoom?: SavedRoomPayload;
+  rules?: RulesConfig | null;
 }
 
 interface JoinRoomPayload {
@@ -41,7 +38,13 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
 
-  constructor(private readonly roomsService: RoomsService) {}
+  constructor(
+    private readonly roomsService: RoomsService,
+    @Inject(forwardRef(() => GameService))
+    private readonly gameService: GameService,
+    @Inject(forwardRef(() => GameGateway))
+    private readonly gameGateway: GameGateway,
+  ) {}
 
   handleConnection(client: Socket): void {
     try {
@@ -105,30 +108,51 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('rooms:create')
-  createRoom(
+  async createRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: CreateRoomPayload,
   ) {
     try {
       const userId = this.getUserId(client);
 
-      const source = payload.savedRoom
-        ? {
-            name: payload.savedRoom.name,
-            rules: payload.savedRoom.rules,
-          }
-        : {
-            name: payload.name,
-            rules: payload.rules,
-          };
+      const roomName = payload.name?.trim();
+      if (!roomName) {
+        throw new WsException('La sala necesita un nombre');
+      }
 
-      if (!source.name || !source.rules) {
-        throw new WsException('name and rules are required');
+      let rules = payload.rules ?? undefined;
+      let savedRoomName: string | undefined;
+      let warning: string | undefined;
+
+      if (!rules) {
+        const savedRoom = await this.gameService.getSavedRoomConfigByName(
+          userId,
+          roomName,
+        );
+
+        if (!savedRoom) {
+          throw new WsException(
+            'No se encontraron reglas guardadas para ese nombre de sala',
+          );
+        }
+
+        rules = savedRoom.rules;
+        savedRoomName = savedRoom.roomName;
+      } else {
+        const existingSavedRoom = await this.gameService.getSavedRoomConfigByName(
+          userId,
+          roomName,
+        );
+        if (existingSavedRoom) {
+          warning =
+            'Ya existe una partida guardada con este nombre; al guardar se sobreescribirá';
+        }
       }
 
       const room = this.roomsService.createRoom(userId, client.id, {
-        name: source.name,
-        rules: source.rules,
+        name: roomName,
+        rules,
+        savedRoomName,
       });
 
       client.join(room.code);
@@ -140,6 +164,8 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         success: true,
         roomCode: room.code,
         roomName: room.name,
+        loadedFromSave: Boolean(savedRoomName),
+        warning,
       };
     } catch (error) {
       throw new WsException(this.getErrorMessage(error));
@@ -221,20 +247,36 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('rooms:start')
-  startRoom(
+  async startRoom(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: StartRoomPayload,
   ) {
     try {
       const userId = this.getUserId(client);
-      const room = this.roomsService.startRoom(userId, payload.roomCode);
+      const room = this.roomsService.getRoomByUserId(userId);
+      if (!room || room.code !== payload.roomCode) {
+        throw new WsException('El usuario no pertenece a la sala indicada');
+      }
+
+      const savedRoomName = this.roomsService.getSavedRoomName(room.code) ?? undefined;
+
+      let startResult;
+      if (savedRoomName) {
+        startResult = await this.gameGateway.iniciarPartida(client, {
+          savedRoomName,
+        });
+        this.roomsService.clearSavedRoomName(room.code);
+      } else {
+        this.roomsService.startRoom(userId, payload.roomCode);
+        startResult = await this.gameGateway.iniciarPartida(client);
+      }
 
       const roomState = this.roomsService.getRoomState(room.code);
       this.server.to(room.code).emit('room:update', roomState);
 
       return {
-        success: true,
         roomCode: room.code,
+        ...startResult,
       };
     } catch (error) {
       throw new WsException(this.getErrorMessage(error));
@@ -252,6 +294,33 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private getErrorMessage(error: unknown): string {
+    //pego esto aqui por el iniciar partida que hay 
+    if (error instanceof WsException) {
+      const wsError = error.getError();
+
+      if (typeof wsError === 'string') {
+        return wsError;
+      }
+
+      if (
+        typeof wsError === 'object' &&
+        wsError !== null &&
+        'message' in wsError
+      ) {
+        const message = (wsError as { message?: unknown }).message;
+
+        if (typeof message === 'string') {
+          return message;
+        }
+
+        if (Array.isArray(message)) {
+          return message.join(', ');
+        }
+      }
+
+      return 'Unexpected room error';
+    }
+
     if (error instanceof Error) {
       return error.message;
     }

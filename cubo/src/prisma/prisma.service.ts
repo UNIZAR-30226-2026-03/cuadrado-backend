@@ -6,6 +6,8 @@ import { Pool } from 'pg';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+  private pool: Pool;
+
   constructor(config: ConfigService) {
     const databaseUrl = config.get<string>('DATABASE_URL');
     if (!databaseUrl) {
@@ -18,6 +20,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     const adapter = new PrismaPg(pool);
 
     super({ adapter });
+    this.pool = pool;
   }
 
   async onModuleInit() {
@@ -29,5 +32,6 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async onModuleDestroy() {
     // Se cierra la conexión al apagar el servidor para no dejar zombies en Postgres
     await this.$disconnect();
+    await this.pool.end();
   }
 }
