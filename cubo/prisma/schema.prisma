@@ -34,7 +34,6 @@ model User {
   @@index([eloRating])
 
   gameStates         GameState[]        @relation("UserGameStates") //Partidas de las que es creador
-  pausedGamePlayers  PausedGamePlayer[]  //Partidas pausadas en las que participa (incluidas )
   userSkins          UserSkin[]
   equippedAvatarId String? @map("equipped_avatar_id")  // null = skin por defecto
   equippedCardId   String? @map("equipped_card_id")    // null = skin por defecto
@@ -58,8 +57,10 @@ model RefreshToken {
 }
 
 model GameState {
-  name                 String @id
+  id                   String @id @default(cuid())
   creatorId            String @map("creator_id")
+  roomName             String @map("room_name")
+  roomRules            Json @map("room_rules")
   habilidadesActivadas Int[]  @map("habilidades_activadas")
   discardedCards       Int[] @map("discarded_cards")
   turn                 Int
@@ -68,20 +69,24 @@ model GameState {
   creator             User               @relation("UserGameStates", fields: [creatorId], references: [username])
   pausedGamePlayers   PausedGamePlayer[]
 
+  @@unique([creatorId, roomName])
+
   @@map("GAME_STATE")
 }
 
 model PausedGamePlayer {
-  roomId    String @map("room_id")
+  gameStateId    String @map("game_state_id")
   userId    String @map("user_id")
+  controlador String @default("humano")
+  dificultadBot String? @map("dificultad_bot")
+  nombreEnPartida String? @map("nombre_en_partida")
   turnOrder Int    @map("turn_order")
   cards     Int[]
   habilidades Int[]
 
-  gameState GameState @relation(fields: [roomId], references: [name])
-  user      User      @relation(fields: [userId], references: [username])
+  gameState GameState @relation(fields: [gameStateId], references: [id])
 
-  @@id([roomId, userId])
+  @@id([gameStateId, userId])
   @@map("PAUSED_GAME_PLAYERS")
 }
 

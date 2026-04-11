@@ -146,7 +146,6 @@ describe('GameManager', () => {
 
     const persisted = manager.exportarEstadoPersistido(game);
 
-    expect(persisted.gameId).toBe(game.gameId);
     expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
     expect(game.estadoGlobal.jugadores[0].cartaPendiente).toBeUndefined();
   });
@@ -169,19 +168,24 @@ describe('GameManager', () => {
 
   it('carga estado persistido restaurando cartas protegidas y habilidades almacenadas', () => {
     const persisted = {
-      gameId: 'SAVE01',
       turn: 1,
       habilidadesActivadas: [],
       discardedCards: [12],
       players: [
         {
           userId: 'u1',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 0,
           cards: [101, 14, 27, 40],
           habilidades: [7],
         },
         {
           userId: 'u2',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 1,
           cards: [2, 15, 28, 41],
           habilidades: [8],
@@ -201,19 +205,24 @@ describe('GameManager', () => {
 
   it('rechaza carga con cartas duplicadas en snapshot', () => {
     const persisted = {
-      gameId: 'SAVE-DUP',
       turn: 0,
       habilidadesActivadas: [],
       discardedCards: [1],
       players: [
         {
           userId: 'u1',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 0,
           cards: [1, 14, 27, 40],
           habilidades: [],
         },
         {
           userId: 'u2',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 1,
           cards: [2, 15, 28, 41],
           habilidades: [],
@@ -228,19 +237,24 @@ describe('GameManager', () => {
 
   it('rechaza carga con turno persistido fuera de rango', () => {
     const persisted = {
-      gameId: 'SAVE02',
       turn: 2,
       habilidadesActivadas: [],
       discardedCards: [10],
       players: [
         {
           userId: 'u1',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 0,
           cards: [1, 14, 27, 40],
           habilidades: [],
         },
         {
           userId: 'u2',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 1,
           cards: [2, 15, 28, 41],
           habilidades: [],

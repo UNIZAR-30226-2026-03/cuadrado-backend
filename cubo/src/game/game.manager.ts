@@ -91,7 +91,6 @@ export interface PersistedPlayerState {
 }
 
 export interface PersistedGameState {
-  gameId: string;
   turn: number;
   habilidadesActivadas: number[];
   discardedCards: number[];
@@ -710,7 +709,6 @@ export class GameManager {
     );
 
     return {
-      gameId: partida.gameId,
       turn: partida.estadoGlobal.turn,
       habilidadesActivadas: [...partida.estadoGlobal.habilidadesActivadas],
       discardedCards: partida.estadoGlobal.cartasDescartadas.map((card) =>
@@ -791,6 +789,7 @@ export class GameManager {
     }
 
     const turn = persisted.turn;
+    const gameCode = this.generateUniqueRoomCode();
 
     const estadoGlobal: GameState = {
       turn,
@@ -809,7 +808,7 @@ export class GameManager {
     };
 
     const partida: Game = {
-      gameId: persisted.gameId,
+      gameId: gameCode,
       roomId: codigoSala,
       estado: 'activo',
       estadoGlobal,

@@ -24,6 +24,7 @@ export interface Room {
   hostId: string;
   players: Map<string, Player>;
   rules: RulesConfig;
+  savedRoomName?: string;
   started: boolean;
   createdAt: Date;
 }

@@ -17,6 +17,7 @@ const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 export interface CreateRoomInput {
   name: string;
   rules: RulesConfig;
+  savedRoomName?: string;
 }
 
 @Injectable()
@@ -54,6 +55,7 @@ export class RoomManager {
       hostId: userId,
       players,
       rules: input.rules,
+      savedRoomName: input.savedRoomName,
       started: false,
       createdAt: new Date(),
     };
@@ -255,6 +257,25 @@ export class RoomManager {
     room.started = true;
 
     return room;
+  }
+
+  getSavedRoomName(roomCode: string): string | null {
+    const room = this.getRoomByCode(roomCode);
+
+    if (!room?.savedRoomName) {
+      return null;
+    }
+
+    return room.savedRoomName;
+  }
+
+  clearSavedRoomName(roomCode: string): void {
+    const room = this.getRoomByCode(roomCode);
+    if (!room) {
+      return;
+    }
+
+    room.savedRoomName = undefined;
   }
 
   /*
