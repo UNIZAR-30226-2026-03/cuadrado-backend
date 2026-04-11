@@ -1,3 +1,4 @@
+import { Injectable, Logger } from '@nestjs/common';
 import { Player } from './interfaces/player.interface';
 import {
   PublicRoomSummary,
@@ -5,6 +6,9 @@ import {
   RoomState,
 } from './interfaces/room.interface';
 import { RulesConfig } from './interfaces/rules-config.interface';
+import { BotsService } from '../bots/bots.service';
+import { playerController } from "./interfaces/room.interface";
+import { dificultadBot } from "./interfaces/room.interface";
 
 const RECONNECT_TIMEOUT_MS = 25000;
 const ROOM_CODE_LENGTH = 6;
@@ -15,10 +19,20 @@ export interface CreateRoomInput {
   rules: RulesConfig;
 }
 
+@Injectable()
 export class RoomManager {
+  private readonly logger = new Logger(RoomManager.name);
+
+  //mapa que relaciona roomID -> Room Objeto
   private readonly rooms = new Map<string, Room>();
+  //mapa que relaciona userID->roomID
   private readonly userToRoom = new Map<string, string>();
 
+  constructor(private botsService: BotsService) {}
+
+
+  // Crea una nueva sala y asigna al usuario como host. 
+  // Lanza errores si el usuario ya está en una sala o si el nombre de la sala es inválido.
   createRoom(userId: string, socketId: string, input: CreateRoomInput): Room {
     if (this.userToRoom.has(userId)) {
       throw new Error('User is already in a room');
@@ -31,8 +45,9 @@ export class RoomManager {
 
     const roomCode = this.generateUniqueRoomCode();
     const players = new Map<string, Player>();
-    players.set(userId, this.createPlayer(userId, socketId, true));
-
+    const jugadorNuevo = this.createPlayer(userId, socketId, true, 0);
+    players.set(userId, jugadorNuevo);
+    
     const room: Room = {
       name: roomName,
       code: roomCode,
@@ -44,11 +59,14 @@ export class RoomManager {
     };
 
     this.rooms.set(room.code, room);
-    this.userToRoom.set(userId, room.code);
+    this.userToRoom.set(userId, room.code); 
 
     return room;
   }
 
+  // Unir a una sala existente usando el código de la sala.
+  // Lanza errores si la sala no existe, si el usuario ya está en una sala, 
+  // si la sala ya ha comenzado o si la sala está llena.
   joinRoom(userId: string, socketId: string, roomCode: string): Room {
     const normalizedCode = this.normalizeRoomCode(roomCode);
     const room = this.rooms.get(normalizedCode);
@@ -69,7 +87,8 @@ export class RoomManager {
       throw new Error('Room is full');
     }
 
-    room.players.set(userId, this.createPlayer(userId, socketId, false));
+    room.players.set(userId, this.createPlayer(userId, socketId, false,
+        room.players.size));
     this.userToRoom.set(userId, room.code);
 
     return room;
@@ -101,7 +120,9 @@ export class RoomManager {
         if (existingPlayer.disconnectTimeout) {
           clearTimeout(existingPlayer.disconnectTimeout);
         }
-        this.userToRoom.delete(existingPlayer.userId);
+        if (this.userToRoom.get(existingPlayer.userId) === room.code) {
+          this.userToRoom.delete(existingPlayer.userId);
+        }
       });
 
       this.rooms.delete(room.code);
@@ -120,35 +141,58 @@ export class RoomManager {
 
   handleDisconnect(userId: string): {
     roomCode: string | null;
-    shouldWaitForReconnect: boolean;
+    shouldEmitRoomUpdate: boolean;
+    roomClosed: boolean;
+    waitingForReconnect: boolean;
   } {
     const roomCode = this.userToRoom.get(userId);
 
     if (!roomCode) {
-      return { roomCode: null, shouldWaitForReconnect: false };
+      return {
+        roomCode: null,
+        shouldEmitRoomUpdate: false,
+        roomClosed: false,
+        waitingForReconnect: false,
+      };
     }
 
     const room = this.rooms.get(roomCode);
     if (!room) {
-      return { roomCode: null, shouldWaitForReconnect: false };
+      return {
+        roomCode: null,
+        shouldEmitRoomUpdate: false,
+        roomClosed: false,
+        waitingForReconnect: false,
+      };
     }
 
     const player = room.players.get(userId);
     if (!player) {
-      return { roomCode: null, shouldWaitForReconnect: false };
+      return {
+        roomCode: null,
+        shouldEmitRoomUpdate: false,
+        roomClosed: false,
+        waitingForReconnect: false,
+      };
     }
 
-    player.connected = false;
-
-    if (player.disconnectTimeout) {
-      clearTimeout(player.disconnectTimeout);
+    if (room.started) {
+      this.marcarJugadorDesconectado(userId);
+      return {
+        roomCode,
+        shouldEmitRoomUpdate: true,
+        roomClosed: false,
+        waitingForReconnect: true,
+      };
     }
 
-    player.disconnectTimeout = setTimeout(() => {
-      this.leaveRoom(userId);
-    }, RECONNECT_TIMEOUT_MS);
-
-    return { roomCode, shouldWaitForReconnect: true };
+    const leaveResult = this.leaveRoom(userId);
+    return {
+      roomCode,
+      shouldEmitRoomUpdate: Boolean(leaveResult.room && !leaveResult.isHostLeaving),
+      roomClosed: Boolean(leaveResult.room && leaveResult.isHostLeaving),
+      waitingForReconnect: false,
+    };
   }
 
   handleReconnect(
@@ -194,18 +238,58 @@ export class RoomManager {
     }
 
     const allConnected = Array.from(room.players.values()).every(
-      (player) => player.connected,
+      (player) => player.connected || player.controlador === 'bot',
     );
 
     if (!allConnected) {
       throw new Error('All players must be connected to start');
     }
+    // Agregar bots si está configurado
+    this.botsService.agregarBotsARoom(room, 'facil');
 
+    
     if (room.players.size < 2) {
       throw new Error('At least 2 players required to start');
     }
 
     room.started = true;
+
+    return room;
+  }
+
+  /*
+  * Cuando se implemente la funcionalidad de las partidas habrá
+  * que guardar el estado de la partida en la base de datos.
+  */
+  pauseRoom(roomCode : string){
+    const room = this.getRoomByCode(roomCode);
+
+  }
+
+  resetRoomAfterGame(roomCode: string): Room | null {
+    const room = this.getRoomByCode(roomCode);
+
+    if (!room) {
+      return null;
+    }
+
+    room.started = false;
+
+    const hayHumanosEnSala = Array.from(room.players.values()).some(
+      (player) =>
+        player.controlador === 'humano' &&
+        this.userToRoom.get(player.userId) === room.code,
+    );
+
+    if (!hayHumanosEnSala) {
+      room.players.forEach((player) => {
+        if (this.userToRoom.get(player.userId) === room.code) {
+          this.userToRoom.delete(player.userId);
+        }
+      });
+      this.rooms.delete(room.code);
+      return null;
+    }
 
     return room;
   }
@@ -223,6 +307,9 @@ export class RoomManager {
       hostId: room.hostId,
       players: Array.from(room.players.values()).map((player) => ({
         userId: player.userId,
+        controlador: player.controlador,
+        dificultadBot: player.dificultadBot,
+        nombreEnPartida: player.nombreEnPartida,
         socketId: player.socketId,
         isHost: player.isHost,
         joinedAt: player.joinedAt,
@@ -254,6 +341,84 @@ export class RoomManager {
         rules: room.rules,
         createdAt: room.createdAt,
       }));
+  }
+
+  marcarJugadorDesconectado(userId: string): Room | null {
+    const room = this.getRoomByUserId(userId);
+
+    if (!room) {
+      return null;
+    }
+
+    const player = room.players.get(userId);
+    if (!player) {
+      return null;
+    }
+
+    if (player.disconnectTimeout) {
+      clearTimeout(player.disconnectTimeout);
+      player.disconnectTimeout = undefined;
+    }
+
+    player.connected = false;
+    player.socketId = '';
+
+    return room;
+  }
+
+  cambiarControladorJugador(
+    userId: string,
+    controlador: playerController,
+    dificultadBot?: dificultadBot,
+  ): Player | null {
+    const room = this.getRoomByUserId(userId);
+
+    if (!room) {
+      return null;
+    }
+
+    const player = room.players.get(userId);
+    if (!player) {
+      return null;
+    }
+
+    this.establecerControladorJugador(player, controlador, dificultadBot);
+    return player;
+  }
+
+  desvincularUsuarioDeSalaActiva(userId: string): Room | null {
+    const roomCode = this.userToRoom.get(userId);
+    if (!roomCode) {
+      return null;
+    }
+
+    const room = this.rooms.get(roomCode) || null;
+    if (!room) {
+      this.userToRoom.delete(userId);
+      return null;
+    }
+
+    this.userToRoom.delete(userId);
+
+    if (room.hostId === userId) {
+      const hostAnterior = room.players.get(userId);
+      if (hostAnterior) {
+        hostAnterior.isHost = false;
+      }
+
+      const nuevoHost = Array.from(room.players.values()).find(
+        (player) =>
+          player.userId !== userId &&
+          player.controlador === 'humano' &&
+          this.userToRoom.get(player.userId) === room.code,
+      );
+      if (nuevoHost) {
+        room.hostId = nuevoHost.userId;
+        nuevoHost.isHost = true;
+      }
+    }
+
+    return room;
   }
 
   private getRoomByCode(roomCode: string): Room | null {
@@ -291,14 +456,38 @@ export class RoomManager {
     userId: string,
     socketId: string,
     isHost: boolean,
+    idInRoom: number,
+    controlador: playerController = 'humano',
   ): Player {
+   
     return {
       userId,
+      controlador,
       socketId,
       isHost,
       joinedAt: new Date(),
       connected: true,
       disconnectTimeout: undefined,
+      idInRoom: idInRoom,
     };
   }
+
+  private establecerControladorJugador(user: Player, controlador: playerController,
+    dificultadBot?: dificultadBot,){
+
+      user.controlador = controlador;
+
+      if(user.controlador === 'bot'){
+        user.dificultadBot = dificultadBot;
+        user.nombreEnPartida = `bot${user.idInRoom + 1}`;
+        user.connected = false;
+        user.socketId = '';
+        return;
+      }
+
+      user.dificultadBot = undefined;
+      user.nombreEnPartida = undefined;
+    }
+
+
 }

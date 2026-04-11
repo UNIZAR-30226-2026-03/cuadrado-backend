@@ -13,7 +13,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   async register(payload: RegisterDto) {
     // Verificar si el usuario ya existe por username
@@ -45,7 +45,6 @@ export class AuthService {
         passwordHash,
         cubitos: 0,
         eloRating: 1200,
-        rankPlacement: 0,
         gamesPlayed: 0,
         gamesWon: 0,
         numPlayersPlayed: 0,
@@ -83,7 +82,7 @@ export class AuthService {
       email: user.email,
     });
 
-     // Generar refresh token
+    // Generar refresh token
     const refreshToken = this.jwtService.sign(
       { sub: user.username },
       { expiresIn: '30d' }
@@ -106,7 +105,7 @@ export class AuthService {
         cubitos: user.cubitos,
       },
     };
-    
+
   }
 
   async changePassword(username: string, payload: ChangePasswordDto) {

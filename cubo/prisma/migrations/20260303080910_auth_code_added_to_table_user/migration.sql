@@ -5,4 +5,4 @@
 
 */
 -- AlterTable
-ALTER TABLE "USERS" ADD COLUMN     "auth_code" TEXT NOT NULL;
+ALTER TABLE "USERS" ADD COLUMN     "auth_code" TEXT;
