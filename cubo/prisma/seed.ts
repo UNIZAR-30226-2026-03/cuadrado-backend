@@ -34,7 +34,12 @@ function resolveSeedUrl(url: string): string {
 }
 
 async function main() {
-  await prisma.skin.deleteMany({}); // Borrar para que no dé error el repoblar
+  await prisma.$transaction(async (tx) => {
+    // Primero borramos relaciones para no violar la FK USER_SKINS -> SKINS
+    await tx.userSkin.deleteMany({});
+    await tx.skin.deleteMany({});
+  });
+
   await prisma.skin.createMany({
     data: [
       // CARTAS
