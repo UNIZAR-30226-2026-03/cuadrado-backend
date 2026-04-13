@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,6 +15,7 @@ describe('UsersModule', () => {
         findUnique: jest.fn(),
         findMany: jest.fn(),
         count: jest.fn(),
+        update: jest.fn(),
       },
     };
 
@@ -227,6 +228,200 @@ describe('UsersModule', () => {
         });
       });
     });
+
+    describe('getMySettings', () => {
+      it('should return user settings when they exist', async () => {
+        const mockSettings = {
+          voiceChatVolume: 75,
+          gameMusicVolume: 60,
+          soundEffectsVolume: 80,
+        };
+
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: mockSettings,
+        });
+
+        const result = await service.getMySettings('testuser');
+
+        expect(result).toEqual(mockSettings);
+        expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+          where: { username: 'testuser' },
+          select: { settings: true },
+        });
+      });
+
+      it('should return default settings when none exist', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: null,
+        });
+
+        const result = await service.getMySettings('testuser');
+
+        expect(result).toEqual({
+          voiceChatVolume: 50,
+          gameMusicVolume: 50,
+          soundEffectsVolume: 50,
+        });
+      });
+
+      it('should throw NotFoundException when user not found', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(null);
+
+        await expect(service.getMySettings('nonexistent')).rejects.toThrow(
+          NotFoundException,
+        );
+      });
+    });
+
+    describe('updateMySettings', () => {
+      it('should update all settings successfully', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 50,
+            gameMusicVolume: 50,
+            soundEffectsVolume: 50,
+          },
+        });
+
+        prismaMock.user.update.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 75,
+            gameMusicVolume: 60,
+            soundEffectsVolume: 80,
+          },
+        });
+
+        const result = await service.updateMySettings('testuser', {
+          voiceChatVolume: 75,
+          gameMusicVolume: 60,
+          soundEffectsVolume: 80,
+        });
+
+        expect(result).toEqual({
+          voiceChatVolume: 75,
+          gameMusicVolume: 60,
+          soundEffectsVolume: 80,
+        });
+
+        expect(prismaMock.user.update).toHaveBeenCalledWith({
+          where: { username: 'testuser' },
+          data: {
+            settings: {
+              voiceChatVolume: 75,
+              gameMusicVolume: 60,
+              soundEffectsVolume: 80,
+            },
+          },
+          select: { settings: true },
+        });
+      });
+
+      it('should update partial settings and keep existing ones', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 50,
+            gameMusicVolume: 50,
+            soundEffectsVolume: 50,
+          },
+        });
+
+        prismaMock.user.update.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 75,
+            gameMusicVolume: 50,
+            soundEffectsVolume: 50,
+          },
+        });
+
+        const result = await service.updateMySettings('testuser', {
+          voiceChatVolume: 75,
+        });
+
+        expect(prismaMock.user.update).toHaveBeenCalledWith({
+          where: { username: 'testuser' },
+          data: {
+            settings: {
+              voiceChatVolume: 75,
+              gameMusicVolume: 50,
+              soundEffectsVolume: 50,
+            },
+          },
+          select: { settings: true },
+        });
+      });
+
+      it('should use default settings if user has no settings', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: null,
+        });
+
+        prismaMock.user.update.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 75,
+            gameMusicVolume: 50,
+            soundEffectsVolume: 50,
+          },
+        });
+
+        const result = await service.updateMySettings('testuser', {
+          voiceChatVolume: 75,
+        });
+
+        expect(prismaMock.user.update).toHaveBeenCalledWith({
+          where: { username: 'testuser' },
+          data: {
+            settings: {
+              voiceChatVolume: 75,
+              gameMusicVolume: 50,
+              soundEffectsVolume: 50,
+            },
+          },
+          select: { settings: true },
+        });
+      });
+
+      it('should throw BadRequestException for voiceChatVolume out of range', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 50,
+            gameMusicVolume: 50,
+            soundEffectsVolume: 50,
+          },
+        });
+
+        await expect(
+          service.updateMySettings('testuser', {
+            voiceChatVolume: 150,
+          }),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('should throw BadRequestException for negative volume values', async () => {
+        prismaMock.user.findUnique.mockResolvedValue({
+          settings: {
+            voiceChatVolume: 50,
+            gameMusicVolume: 50,
+            soundEffectsVolume: 50,
+          },
+        });
+
+        await expect(
+          service.updateMySettings('testuser', {
+            gameMusicVolume: -10,
+          }),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('should throw NotFoundException when user not found', async () => {
+        prismaMock.user.findUnique.mockResolvedValue(null);
+
+        await expect(
+          service.updateMySettings('nonexistent', {
+            voiceChatVolume: 50,
+          }),
+        ).rejects.toThrow(NotFoundException);
+      });
+    });
   });
 
   describe('UsersController', () => {
@@ -304,6 +499,48 @@ describe('UsersModule', () => {
         await controller.getTopUsers('invalid');
 
         expect(service.getTopUsers).toHaveBeenCalledWith(20);
+      });
+    });
+
+    describe('getMySettings', () => {
+      it('should call getMySettings with username from JWT', async () => {
+        const mockSettings = {
+          voiceChatVolume: 75,
+          gameMusicVolume: 60,
+          soundEffectsVolume: 80,
+        };
+
+        jest.spyOn(service, 'getMySettings').mockResolvedValue(mockSettings);
+
+        const req = { user: { username: 'testuser' } };
+        const result = await controller.getMySettings(req);
+
+        expect(service.getMySettings).toHaveBeenCalledWith('testuser');
+        expect(result).toEqual(mockSettings);
+      });
+    });
+
+    describe('updateMySettings', () => {
+      it('should call updateMySettings with username and DTO from JWT', async () => {
+        const updateDto = { voiceChatVolume: 75 };
+        const mockSettings = {
+          voiceChatVolume: 75,
+          gameMusicVolume: 50,
+          soundEffectsVolume: 50,
+        };
+
+        jest
+          .spyOn(service, 'updateMySettings')
+          .mockResolvedValue(mockSettings);
+
+        const req = { user: { username: 'testuser' } };
+        const result = await controller.updateMySettings(req, updateDto);
+
+        expect(service.updateMySettings).toHaveBeenCalledWith(
+          'testuser',
+          updateDto,
+        );
+        expect(result).toEqual(mockSettings);
       });
     });
   });

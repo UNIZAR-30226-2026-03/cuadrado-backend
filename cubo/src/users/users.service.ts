@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
 
 //Por ahora devolvemos todo, se puede cambiar
 const userProfileSelect = {
@@ -20,6 +21,13 @@ const userProfileSelect = {
 
 type UserProfileRow = Prisma.UserGetPayload<{ select: typeof userProfileSelect }>;
 type LeaderboardRow = Pick<UserProfileRow, 'username' | 'eloRating'>;
+
+export interface UserSettings {
+  voiceChatVolume: number;
+  gameMusicVolume: number;
+  soundEffectsVolume: number;
+  [key: string]: any; //para que prisma lo acepte para Json
+}
 
 @Injectable()
 export class UsersService {
@@ -108,5 +116,76 @@ export class UsersService {
         eloRating: user.eloRating,
       };
     });
+  }
+
+  async getMySettings(username: string): Promise<UserSettings> {
+    const user = await this.prisma.user.findUnique({
+      where: { username },
+      select: { settings: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    //valores por defecto
+    if (!user.settings) {
+      return {
+        voiceChatVolume: 50,
+        gameMusicVolume: 50,
+        soundEffectsVolume: 50,
+      };
+    }
+
+    return user.settings as UserSettings;
+  }
+
+  async updateMySettings(username: string, updateSettingsDto: UpdateSettingsDto): Promise<UserSettings> {
+    const user = await this.prisma.user.findUnique({
+      where: { username },
+      select: { settings: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    //valores por defecto
+    const currentSettings: UserSettings = user.settings as UserSettings || {
+      voiceChatVolume: 50,
+      gameMusicVolume: 50,
+      soundEffectsVolume: 50,
+    };
+
+    //si existe el nuevo, lo pongo. sino dejo el antiguo
+    const voiceChatVolume = updateSettingsDto.voiceChatVolume ?? currentSettings.voiceChatVolume;
+    const gameMusicVolume = updateSettingsDto.gameMusicVolume ?? currentSettings.gameMusicVolume;
+    const soundEffectsVolume = updateSettingsDto.soundEffectsVolume ?? currentSettings.soundEffectsVolume;
+
+    // Validate all values are within range
+    if (voiceChatVolume < 0 || voiceChatVolume > 100) {
+      throw new BadRequestException('voiceChatVolume debe estar entre 0 y 100');
+    }
+    if (gameMusicVolume < 0 || gameMusicVolume > 100) {
+      throw new BadRequestException('gameMusicVolume debe estar entre 0 y 100');
+    }
+    if (soundEffectsVolume < 0 || soundEffectsVolume > 100) {
+      throw new BadRequestException('soundEffectsVolume debe estar entre 0 y 100');
+    }
+
+    const updatedSettings: UserSettings = {
+      voiceChatVolume,
+      gameMusicVolume,
+      soundEffectsVolume,
+    };
+
+    // Update in database
+    const result = await this.prisma.user.update({
+      where: { username },
+      data: { settings: updatedSettings },
+      select: { settings: true },
+    });
+
+    return result.settings as UserSettings;
   }
 }
