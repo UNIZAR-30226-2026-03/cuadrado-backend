@@ -193,8 +193,9 @@ export class HardBotStrategy extends BotManager {
    * 
    * Lógica:
    * - ver-carta-propia: ve una desconocida
-   * - ver-carta-propia-y-rival: ve una desconocida suya + cualquiera del rival
-   * - intercambiar-carta: intercambia una CONOCIDA alta por una del rival
+   * - intercambiar-carta: intercambio interactivo bidireccional (Carta 9)
+   *   * Paso 1 (esperando-iniciador): ofrece una carta CONOCIDA alta
+   *   * Paso 2 (esperando-rival): responde eligiendo carta del rival
    * - intercambiar-todas: solo si conoce pocas o tiene muchas altas o rival tiene menos cartas
    * - proteger-carta: protege la más baja conocida (defensa)
    */
@@ -234,48 +235,50 @@ export class HardBotStrategy extends BotManager {
         return { accion: 'ver-carta', cartaIndex: indice };
       }
 
-      case 'ver-carta-propia-y-rival': {
-        // Elige una desconocida suya
-        const cartaIndex = indicesDesconocidas.length > 0
-          ? indicesDesconocidas[Math.floor(Math.random() * indicesDesconocidas.length)]
-          : Math.floor(Math.random() * estado.cartasMano.length);
-
-        // Registra la carta propia vista directamente
-        const cartaVista = estado.cartasMano[cartaIndex];
-        if (cartaVista) {
-          this.registrarCartaVista(botId, cartaIndex, cartaVista);
-        }
-
-        // Elige rival al azar
-        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
-        if (rivalNum === null) {
-          return { accion: 'esperar' };
-        }
-
-        // Elige carta del rival al azar (no sabemos qué tiene)
-        const numCartasRival = partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
-        const cartaIndexRival = Math.floor(Math.random() * numCartasRival);
-
-        return {
-          accion: 'ver-carta-propia-y-rival',
-          cartaIndex,
-          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
-          cartaIndexTarget: cartaIndexRival,
-        };
-      }
-
       case 'intercambiar-carta': {
-        // Estrategia: intercambia una carta CONOCIDA alta por una del rival
-        const cartasAltasConocidas = cartasConocidas.filter(c => c.puntos > 8);
-        
-        if (cartasAltasConocidas.length === 0) {
-          // Sin cartas altas conocidas, elige aleatoria de cartas conocidas
-          if (cartasConocidas.length === 0) {
+        // Manejo del intercambio interactivo bidireccional (Carta 9)
+        // Primer paso: botId es quien inicia y elige qué carta ofrecer
+        if (!permiso.estado || permiso.estado === 'esperando-iniciador') {
+          // Estrategia: ofrece una carta CONOCIDA alta por una del rival
+          const cartasAltasConocidas = cartasConocidas.filter(c => c.puntos > 8);
+          
+          if (cartasAltasConocidas.length === 0) {
+            // Sin cartas altas conocidas, elige aleatoria
+            let cartaIndex: number;
+            
+            if (cartasConocidas.length > 0) {
+              // Si tiene cartas conocidas pero no altas, elige una aleatoria de las conocidas
+              const cartaParaOfrecer = 
+                cartasConocidas[Math.floor(Math.random() * cartasConocidas.length)];
+              cartaIndex = estado.cartasMano.indexOf(cartaParaOfrecer);
+              if (cartaIndex === -1) {
+                return { accion: 'esperar' };
+              }
+            } else {
+              // Si no conoce ninguna, elige una aleatoria de toda la mano
+              cartaIndex = Math.floor(Math.random() * estado.cartasMano.length);
+            }
+
+            const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+            if (rivalNum === null) {
+              return { accion: 'esperar' };
+            }
+
+            // Retorna acción del primer paso: preparar intercambio (este paso siempre es el iniciador)
+            return {
+              accion: 'intercambiar-carta',
+              cartaIndex,
+              targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+            };
+          }
+
+          // Ofrece una carta alta conocida
+          const cartaAlta = this.cartaMasAlta(cartasAltasConocidas);
+          if (!cartaAlta) {
             return { accion: 'esperar' };
           }
-          const cartaParaIntercambiar = 
-            cartasConocidas[Math.floor(Math.random() * cartasConocidas.length)];
-          const cartaIndex = estado.cartasMano.indexOf(cartaParaIntercambiar);
+
+          const cartaIndex = estado.cartasMano.indexOf(cartaAlta);
           if (cartaIndex === -1) {
             return { accion: 'esperar' };
           }
@@ -285,39 +288,29 @@ export class HardBotStrategy extends BotManager {
             return { accion: 'esperar' };
           }
 
-          const numCartasRival = partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
-          const cartaRival = Math.floor(Math.random() * numCartasRival);
-
           return {
             accion: 'intercambiar-carta',
             cartaIndex,
             targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
-            cartaIndexTarget: cartaRival,
           };
         }
 
-        // Intercambia una carta alta conocida
-        const cartaAlta = this.cartaMasAlta(cartasAltasConocidas);
-        if (!cartaAlta) {
-          return { accion: 'esperar' };
+        // Segundo paso: botId es quien responde (el rival ya eligió su carta, ahora el bot elige la suya)
+        if (permiso.estado === 'esperando-rival' && permiso.rivalId && permiso.indiceCartaIniciador !== undefined) {
+          // El rival ya eligió qué carta del bot quiere
+          // El bot elige qué carta de su propia mano quiere dar a cambio
+          
+          // Estrategia: elige una carta de su mano al azar
+          const cartaIndex = Math.floor(Math.random() * estado.cartasMano.length);
+
+          return {
+            accion: 'intercambiar-carta',
+            cartaIndex,
+            targetUserId: permiso.rivalId,
+          };
         }
 
-        const cartaIndex = estado.cartasMano.indexOf(cartaAlta);
-
-        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
-        if (rivalNum === null) {
-          return { accion: 'esperar' };
-        }
-
-        const numCartasRival = partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
-        const cartaRival = Math.floor(Math.random() * numCartasRival);
-
-        return {
-          accion: 'intercambiar-carta',
-          cartaIndex,
-          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
-          cartaIndexTarget: cartaRival,
-        };
+        return { accion: 'esperar' };
       }
 
       case 'intercambiar-todas': {
