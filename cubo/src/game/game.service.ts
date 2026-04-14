@@ -11,7 +11,11 @@ import {
 import { Game } from './interfaces/game.interface';
 import { dificultadBot, Room, RoomState } from '../rooms/interfaces/room.interface';
 import { Player } from '../rooms/interfaces/player.interface';
-import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
+import {
+  AVAILABLE_POWERS,
+  DEFAULT_DECK_COUNT,
+  RulesConfig,
+} from '../rooms/interfaces/rules-config.interface';
 import { RoomsService } from '../rooms/rooms.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -348,6 +352,7 @@ export class GameService {
 
     const persisted: PersistedGameState = {
       turn: snapshot.turn,
+      deckCount: room.rules.deckCount,
       habilidadesActivadas: snapshot.habilidadesActivadas,
       discardedCards: snapshot.discardedCards,
       players: playersGuardados.map((player) => ({
@@ -450,7 +455,10 @@ export class GameService {
 
     room.started = true;
 
-    return this.gameManager.inicioPartida(room.code, jugadoresIniciales);
+    return this.gameManager.inicioPartida(room.code, jugadoresIniciales, {
+      deckCount: room.rules.deckCount,
+      enabledPowers: room.rules.enabledPowers,
+    });
   }
 
   robarCarta(partida: Game, userId: string): ResultadoRobarCarta {
@@ -615,7 +623,18 @@ export class GameService {
       turnTimeSeconds,
       isPrivate,
       fillWithBots,
+      deckCount,
+      enabledPowers,
     } = rules;
+
+    const normalizedDeckCount =
+      deckCount == null ? DEFAULT_DECK_COUNT : deckCount;
+
+    if (normalizedDeckCount !== 1 && normalizedDeckCount !== 2) {
+      throw new Error('Las reglas guardadas tienen un formato inválido');
+    }
+
+    const normalizedEnabledPowers = this.parseEnabledPowers(enabledPowers);
 
     if (
       typeof maxPlayers !== 'number' ||
@@ -631,6 +650,8 @@ export class GameService {
       turnTimeSeconds,
       isPrivate,
       fillWithBots,
+      deckCount: normalizedDeckCount,
+      enabledPowers: normalizedEnabledPowers,
     };
   }
 
@@ -641,7 +662,35 @@ export class GameService {
       turnTimeSeconds: rules.turnTimeSeconds,
       isPrivate: rules.isPrivate,
       fillWithBots: rules.fillWithBots,
+      deckCount: rules.deckCount ?? DEFAULT_DECK_COUNT,
+      enabledPowers: rules.enabledPowers ?? [...AVAILABLE_POWERS],
     };
+  }
+
+  private parseEnabledPowers(enabledPowers: unknown): number[] {
+    if (enabledPowers == null) {
+      return [...AVAILABLE_POWERS];
+    }
+
+    if (!Array.isArray(enabledPowers)) {
+      throw new Error('Las reglas guardadas tienen un formato inválido');
+    }
+
+    const normalized = new Set<number>();
+
+    for (const power of enabledPowers) {
+      if (typeof power !== 'number' || !Number.isInteger(power)) {
+        throw new Error('Las reglas guardadas tienen un formato inválido');
+      }
+
+      if (!AVAILABLE_POWERS.includes(power as (typeof AVAILABLE_POWERS)[number])) {
+        throw new Error('Las reglas guardadas tienen un formato inválido');
+      }
+
+      normalized.add(power);
+    }
+
+    return [...normalized];
   }
 
   //estoy harto de poner esto hago funcion y ala

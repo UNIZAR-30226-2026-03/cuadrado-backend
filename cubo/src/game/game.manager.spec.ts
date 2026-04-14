@@ -5,6 +5,7 @@ import {
 } from './game.manager';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { AVAILABLE_POWERS } from '../rooms/interfaces/rules-config.interface';
 
 const makeCard = (
   carta: number,
@@ -23,8 +24,8 @@ describe('GameManager', () => {
   let game: Game;
   const roomId = 'ROOM01';
   const jugadoresIniciales: EstadoInicialJugador[] = [
-    { userId: 'u1' },
-    { userId: 'u2' },
+    { userId: 'u1', controlador: 'humano' },
+    { userId: 'u2', controlador: 'humano' },
   ];
 
   beforeEach(() => {
@@ -52,6 +53,42 @@ describe('GameManager', () => {
     expect(() => manager.robarCarta(game, 'u2')).toThrow(
       'No es el turno del jugador que intenta jugar',
     );
+  });
+
+  it('si una habilidad está desactivada, descartar esa carta no dispara skill', () => {
+    const gameConPoderesParciales = manager.inicioPartida('ROOM-PARTIAL', jugadoresIniciales, {
+      deckCount: 1,
+      enabledPowers: [1, 2],
+    });
+
+    gameConPoderesParciales.estadoGlobal.phase = 'WAIT_DECISION';
+    gameConPoderesParciales.estadoGlobal.jugadores[0].cartaPendiente = makeCard(10);
+
+    const resultado = manager.descartarCartaPendiente(gameConPoderesParciales, 'u1');
+
+    expect(resultado.resultadoHabilidad.requiereResolverHabilidad).toBe(false);
+    expect(gameConPoderesParciales.estadoGlobal.phase).toBe('WAIT_DRAW');
+    expect(gameConPoderesParciales.estadoGlobal.turn).toBe(1);
+  });
+
+  it('inicia con 2 barajas y deja el tamaño esperado de mazo', () => {
+    const gameDosBarajas = manager.inicioPartida('ROOM-2D', jugadoresIniciales, {
+      deckCount: 2,
+      enabledPowers: [...AVAILABLE_POWERS],
+    });
+
+    // 2 barajas: 110 cartas totales. Con 2 jugadores se reparten 8 cartas (4 por jugador).
+    expect(gameDosBarajas.estadoGlobal.numBarajas).toBe(2);
+    expect(gameDosBarajas.estadoGlobal.cartasVigentes).toHaveLength(102);
+  });
+
+  it('respeta enabledPowers vacio al crear partida', () => {
+    const gameSinPoderes = manager.inicioPartida('ROOM-NO-POWERS', jugadoresIniciales, {
+      deckCount: 1,
+      enabledPowers: [],
+    });
+
+    expect(gameSinPoderes.estadoGlobal.habilidadesActivadas).toEqual([]);
   });
 
   it('descartar carta pendiente avanza turno y vuelve a WAIT_DRAW', () => {
@@ -206,6 +243,7 @@ describe('GameManager', () => {
   it('rechaza carga con cartas duplicadas en snapshot', () => {
     const persisted = {
       turn: 0,
+      deckCount: 1,
       habilidadesActivadas: [],
       discardedCards: [1],
       players: [

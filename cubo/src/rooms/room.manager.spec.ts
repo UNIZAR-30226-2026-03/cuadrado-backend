@@ -1,4 +1,5 @@
 import { RoomManager } from './room.manager';
+import { AVAILABLE_POWERS } from './interfaces/rules-config.interface';
 
 //TESTS DEL MODULO ROOMS
 
@@ -57,6 +58,8 @@ describe('RoomManager', () => {
           turnTimeSeconds: 30,
           isPrivate: false,
           fillWithBots: false,
+          deckCount: 2,
+          enabledPowers: [...AVAILABLE_POWERS],
         },
         createdAt: publicRoom.createdAt,
       },

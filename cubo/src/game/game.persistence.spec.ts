@@ -6,6 +6,10 @@ import { GameService } from './game.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomManager } from '../rooms/room.manager';
 import { BotsService } from '../bots/bots.service';
+import { AVAILABLE_POWERS } from '../rooms/interfaces/rules-config.interface';
+
+const cardKey = (card: { carta: number; palo: string; protegida?: boolean }) =>
+  `${card.palo}:${card.carta}:${card.protegida ? 1 : 0}`;
 
 const makeUser = (username: string) => ({
   username,
@@ -31,6 +35,8 @@ const makeBaseRules = (fillWithBots = false) => ({
   turnTimeSeconds: 30,
   isPrivate: false,
   fillWithBots,
+  deckCount: 2 as const,
+  enabledPowers: [...AVAILABLE_POWERS],
 });
 
 const createGameHarness = () => {
@@ -303,5 +309,72 @@ describe('GameService persistence integration', () => {
     expect(secondSnapshot!.id).toBe(firstId);
     expect(secondSnapshot!.turn).toBe(1);
     expect(secondSnapshot!.habilidadesActivadas).toEqual([8]);
+  });
+
+  it('carga reglas nuevas (deckCount y enabledPowers) al restaurar sala y partida', async () => {
+    await prisma.user.createMany({
+      data: [makeUser('host-a'), makeUser('player-a')],
+    });
+
+    const freshBotsService = {
+      agregarBotsARoom: jest.fn(),
+    } as unknown as BotsService;
+    const freshRoomManager = new RoomManager(freshBotsService);
+    const freshRoomsService = new RoomsService(freshRoomManager);
+    const freshGameService = new GameService(
+      new GameManager(),
+      freshRoomsService,
+      prisma,
+    );
+
+    const reglasPersonalizadas = {
+      maxPlayers: 4,
+      turnTimeSeconds: 20,
+      isPrivate: false,
+      fillWithBots: false,
+      deckCount: 2 as const,
+      enabledPowers: [1, 2, 10],
+    };
+
+    const room = freshRoomsService.createRoom('host-a', 'socket-host-a', {
+      name: 'Sala reglas nuevas',
+      rules: reglasPersonalizadas,
+    });
+
+    freshRoomsService.joinRoom('player-a', 'socket-player-a', room.code);
+
+    const game = freshGameService.inicioPartida(room);
+    expect(game.estadoGlobal.numBarajas).toBe(2);
+    expect(game.estadoGlobal.habilidadesActivadas).toEqual([1, 2, 10]);
+
+    await freshGameService.guardarYcerrarPartida(game, 'host-a');
+
+    const reloadedRoom = freshRoomsService.createRoom('host-a', 'socket-host-a-2', {
+      name: 'Sala reglas nuevas',
+      rules: makeBaseRules(false),
+    });
+
+    freshRoomsService.joinRoom('player-a', 'socket-player-a-2', reloadedRoom.code);
+
+    const loaded = await freshGameService.cargarPartidaGuardada(
+      'Sala reglas nuevas',
+      'host-a',
+      'socket-host-a-2',
+    );
+
+    const hostRoom = freshRoomsService.getRoomByUserId('host-a');
+    expect(hostRoom).not.toBeNull();
+    expect(hostRoom!.rules.deckCount).toBe(2);
+    expect(hostRoom!.rules.enabledPowers).toEqual([1, 2, 10]);
+    expect(loaded.estadoGlobal.numBarajas).toBe(2);
+    expect(loaded.estadoGlobal.habilidadesActivadas).toEqual([1, 2, 10]);
+
+    const originalDiscarded = game.estadoGlobal.cartasDescartadas.map(cardKey).sort();
+    const loadedDiscarded = loaded.estadoGlobal.cartasDescartadas.map(cardKey).sort();
+    const originalDeck = game.estadoGlobal.cartasVigentes.map(cardKey).sort();
+    const loadedDeck = loaded.estadoGlobal.cartasVigentes.map(cardKey).sort();
+
+    expect(loadedDiscarded).toEqual(originalDiscarded);
+    expect(loadedDeck).toEqual(originalDeck);
   });
 });
