@@ -13,7 +13,10 @@ import { dificultadBot, Room, RoomState } from '../rooms/interfaces/room.interfa
 import { Player } from '../rooms/interfaces/player.interface';
 import {
   AVAILABLE_POWERS,
+  DEFAULT_ROOM_BOT_DIFFICULTY,
   DEFAULT_DECK_COUNT,
+  ROOM_BOT_DIFFICULTIES,
+  RoomBotDifficulty,
   RulesConfig,
 } from '../rooms/interfaces/rules-config.interface';
 import { RoomsService } from '../rooms/rooms.service';
@@ -304,9 +307,11 @@ export class GameService {
     }));
 
     //porque aun guardamos por separado la dificultad. se podria cambiar pero bueno, por ahora se queda asi 
-    const dificultadBots = 
+    const dificultadBots =
       playersGuardados.find((player) => player.controlador === 'bot')
-        ?.dificultadBot ?? 'facil';
+        ?.dificultadBot ??
+      room.rules.dificultadBots ??
+      DEFAULT_ROOM_BOT_DIFFICULTY;
 
     for (const player of playersGuardados) {
       if (player.controlador !== 'bot') {
@@ -623,6 +628,7 @@ export class GameService {
       turnTimeSeconds,
       isPrivate,
       fillWithBots,
+      dificultadBots,
       deckCount,
       enabledPowers,
     } = rules;
@@ -635,6 +641,7 @@ export class GameService {
     }
 
     const normalizedEnabledPowers = this.parseEnabledPowers(enabledPowers);
+    const normalizedBotDifficulty = this.parseRoomBotDifficulty(dificultadBots);
 
     if (
       typeof maxPlayers !== 'number' ||
@@ -650,6 +657,7 @@ export class GameService {
       turnTimeSeconds,
       isPrivate,
       fillWithBots,
+      dificultadBots: normalizedBotDifficulty,
       deckCount: normalizedDeckCount,
       enabledPowers: normalizedEnabledPowers,
     };
@@ -662,9 +670,25 @@ export class GameService {
       turnTimeSeconds: rules.turnTimeSeconds,
       isPrivate: rules.isPrivate,
       fillWithBots: rules.fillWithBots,
+      dificultadBots: rules.dificultadBots ?? DEFAULT_ROOM_BOT_DIFFICULTY,
       deckCount: rules.deckCount ?? DEFAULT_DECK_COUNT,
       enabledPowers: rules.enabledPowers ?? [...AVAILABLE_POWERS],
     };
+  }
+
+  private parseRoomBotDifficulty(dificultad: unknown): RoomBotDifficulty {
+    if (dificultad == null) {
+      return DEFAULT_ROOM_BOT_DIFFICULTY;
+    }
+
+    if (
+      typeof dificultad === 'string' &&
+      ROOM_BOT_DIFFICULTIES.includes(dificultad as RoomBotDifficulty)
+    ) {
+      return dificultad as RoomBotDifficulty;
+    }
+
+    throw new Error('Las reglas guardadas tienen un formato invalido');
   }
 
   private parseEnabledPowers(enabledPowers: unknown): number[] {

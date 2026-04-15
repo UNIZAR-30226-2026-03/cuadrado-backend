@@ -7,7 +7,10 @@ import {
 } from './interfaces/room.interface';
 import {
   AVAILABLE_POWERS,
+  DEFAULT_ROOM_BOT_DIFFICULTY,
   DEFAULT_DECK_COUNT,
+  ROOM_BOT_DIFFICULTIES,
+  RoomBotDifficulty,
   RulesConfig,
 } from './interfaces/rules-config.interface';
 import { BotsService } from '../bots/bots.service';
@@ -75,6 +78,7 @@ export class RoomManager {
   private normalizarReglas(rules: RulesConfig): RulesConfig {
     const deckCount = this.normalizarDeckCount(rules.deckCount);
     const maxPlayersLimit = deckCount === 1 ? 4 : 8;
+    const dificultadBots = this.normalizarDificultadBots(rules.dificultadBots);
 
     if (!Number.isInteger(rules.maxPlayers) || rules.maxPlayers < 2) {
       throw new Error('maxPlayers debe ser un entero entre 2 y 8');
@@ -93,9 +97,29 @@ export class RoomManager {
       turnTimeSeconds: rules.turnTimeSeconds,
       isPrivate: rules.isPrivate,
       fillWithBots: rules.fillWithBots,
+      dificultadBots,
       deckCount,
       enabledPowers,
     };
+  }
+
+  private normalizarDificultadBots(
+    dificultad: unknown,
+  ): RoomBotDifficulty {
+    if (dificultad == null) {
+      return DEFAULT_ROOM_BOT_DIFFICULTY;
+    }
+
+    if (
+      typeof dificultad === 'string' &&
+      ROOM_BOT_DIFFICULTIES.includes(dificultad as RoomBotDifficulty)
+    ) {
+      return dificultad as RoomBotDifficulty;
+    }
+
+    throw new Error(
+      `dificultadBots debe ser una de: ${ROOM_BOT_DIFFICULTIES.join(', ')}`,
+    );
   }
 
   private normalizarDeckCount(deckCount: number): 1 | 2 {
@@ -368,7 +392,10 @@ export class RoomManager {
       throw new Error('All players must be connected to start');
     }
     // Agregar bots si está configurado
-    this.botsService.agregarBotsARoom(room, 'facil');
+    this.botsService.agregarBotsARoom(
+      room,
+      room.rules.dificultadBots ?? DEFAULT_ROOM_BOT_DIFFICULTY,
+    );
 
     
     if (room.players.size < 2) {

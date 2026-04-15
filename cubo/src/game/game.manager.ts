@@ -6,11 +6,11 @@ import {
   FinPartidaMotivo,
 } from './interfaces/game.interface';
 import { Card, PaloCarta, Habilidad } from './interfaces/card.interface';
-import { dificultadBot, playerController } from 'src/rooms/interfaces/room.interface';
+import { dificultadBot, playerController } from '../rooms/interfaces/room.interface';
 import {
   AVAILABLE_POWERS,
   DEFAULT_DECK_COUNT,
-} from 'src/rooms/interfaces/rules-config.interface';
+} from '../rooms/interfaces/rules-config.interface';
 
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

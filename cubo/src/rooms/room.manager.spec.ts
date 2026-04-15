@@ -20,6 +20,9 @@ describe('RoomManager', () => {
         turnTimeSeconds: 30,
         isPrivate: false,
         fillWithBots: false,
+        dificultadBots: 'media',
+        deckCount: 2,
+        enabledPowers: [...AVAILABLE_POWERS],
       },
     });
 
@@ -32,6 +35,9 @@ describe('RoomManager', () => {
         turnTimeSeconds: 30,
         isPrivate: false,
         fillWithBots: false,
+        dificultadBots: 'media',
+        deckCount: 2,
+        enabledPowers: [...AVAILABLE_POWERS],
       },
     });
 
@@ -45,6 +51,9 @@ describe('RoomManager', () => {
         turnTimeSeconds: 30,
         isPrivate: true,
         fillWithBots: false,
+        dificultadBots: 'media',
+        deckCount: 2,
+        enabledPowers: [...AVAILABLE_POWERS],
       },
     });
 
@@ -58,6 +67,7 @@ describe('RoomManager', () => {
           turnTimeSeconds: 30,
           isPrivate: false,
           fillWithBots: false,
+          dificultadBots: 'media',
           deckCount: 2,
           enabledPowers: [...AVAILABLE_POWERS],
         },

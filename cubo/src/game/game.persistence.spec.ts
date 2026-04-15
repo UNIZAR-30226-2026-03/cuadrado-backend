@@ -35,6 +35,7 @@ const makeBaseRules = (fillWithBots = false) => ({
   turnTimeSeconds: 30,
   isPrivate: false,
   fillWithBots,
+  dificultadBots: 'media' as const,
   deckCount: 2 as const,
   enabledPowers: [...AVAILABLE_POWERS],
 });

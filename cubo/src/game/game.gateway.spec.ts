@@ -52,6 +52,7 @@ const baseRules: RulesConfig = {
   turnTimeSeconds: 30,
   isPrivate: false,
   fillWithBots: false,
+  dificultadBots: 'media',
 };
 
 const createPlayer = (overrides: Partial<Player> = {}): Player => ({
