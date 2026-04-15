@@ -2,11 +2,29 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { join } from 'path';
+import { existsSync } from 'fs';
+import * as express from 'express';
 import { AppModule } from './app.module';
 import { WebSocketAdapter } from './websocket/websocket.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
+
+  const assetsDir = configService.get<string>('ASSETS_DIR') ?? join(process.cwd(), 'assets'); //por si acaso que use assets
+  if (existsSync(assetsDir)) {
+    app.use(
+      '/assets',
+      express.static(assetsDir, {
+        immutable: true,
+        maxAge: '365d',
+        setHeaders: (res) => {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        },
+      }),
+    );
+  }
   
   // Prefijo global para todas las rutas
   app.setGlobalPrefix('api');
@@ -33,7 +51,6 @@ async function bootstrap() {
     }),
   );
 
-  const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT') ?? 3000;
 
   await app.listen(port);

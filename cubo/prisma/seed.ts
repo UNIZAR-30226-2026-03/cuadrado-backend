@@ -14,8 +14,32 @@ const adapter = new PrismaPg(pool);
 // Pasarlo al cliente
 const prisma = new PrismaClient({ adapter });
 
+const assetsBaseUrl = process.env.ASSETS_BASE_URL?.replace(/\/+$/, '');
+const supabaseAssetsPrefix = '/storage/v1/object/public/cubo-assets/';
+
+function resolveSeedUrl(url: string): string {
+  if (!assetsBaseUrl) return url;
+
+  const prefixIndex = url.indexOf(supabaseAssetsPrefix);
+  if (prefixIndex >= 0) {
+    const relativePath = url.slice(prefixIndex + supabaseAssetsPrefix.length);
+    return `${assetsBaseUrl}/${relativePath}`;
+  }
+
+  if (url.startsWith('/')) {
+    return `${assetsBaseUrl}${url}`;
+  }
+
+  return url;
+}
+
 async function main() {
-  await prisma.skin.deleteMany({}); // Borrar para que no dé error el repoblar
+  await prisma.$transaction(async (tx) => {
+    // Primero borramos relaciones para no violar la FK USER_SKINS -> SKINS
+    await tx.userSkin.deleteMany({});
+    await tx.skin.deleteMany({});
+  });
+
   await prisma.skin.createMany({
     data: [
       // CARTAS
@@ -552,7 +576,10 @@ async function main() {
         price: 200,
         url: 'https://gtelrtcunhznrrapfjbj.supabase.co/storage/v1/object/public/cubo-assets/mat-skins/verde.png',
       },
-    ],
+    ].map((skin) => ({
+      ...skin,
+      url: resolveSeedUrl(skin.url),
+    })),
   });
 }
 
