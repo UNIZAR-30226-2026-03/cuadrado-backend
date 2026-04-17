@@ -1422,7 +1422,7 @@ export class GameManager {
       }
 
       //si es grupo de 4 o mas
-      puntosNoJoker += -3;
+      puntosNoJoker += -8;
     }
 
     //Siempre -1 ya lo cambiaremos si cambiamos su puntuacion
