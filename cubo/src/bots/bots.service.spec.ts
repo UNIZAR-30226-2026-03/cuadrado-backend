@@ -12,6 +12,7 @@ const createRoom = (overrides: Partial<Room> = {}): Room => ({
     turnTimeSeconds: 30,
     isPrivate: false,
     fillWithBots: true,
+    dificultadBots: 'media',
   },
   started: false,
   createdAt: new Date(),
@@ -95,6 +96,7 @@ describe('BotsService', () => {
         turnTimeSeconds: 30,
         isPrivate: false,
         fillWithBots: false,
+        dificultadBots: 'media',
       },
     });
 

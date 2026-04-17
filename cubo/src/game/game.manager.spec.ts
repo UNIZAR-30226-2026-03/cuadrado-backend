@@ -5,6 +5,7 @@ import {
 } from './game.manager';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
+import { AVAILABLE_POWERS } from '../rooms/interfaces/rules-config.interface';
 
 const makeCard = (
   carta: number,
@@ -23,8 +24,8 @@ describe('GameManager', () => {
   let game: Game;
   const roomId = 'ROOM01';
   const jugadoresIniciales: EstadoInicialJugador[] = [
-    { userId: 'u1' },
-    { userId: 'u2' },
+    { userId: 'u1', controlador: 'humano' },
+    { userId: 'u2', controlador: 'humano' },
   ];
 
   beforeEach(() => {
@@ -52,6 +53,42 @@ describe('GameManager', () => {
     expect(() => manager.robarCarta(game, 'u2')).toThrow(
       'No es el turno del jugador que intenta jugar',
     );
+  });
+
+  it('si una habilidad está desactivada, descartar esa carta no dispara skill', () => {
+    const gameConPoderesParciales = manager.inicioPartida('ROOM-PARTIAL', jugadoresIniciales, {
+      deckCount: 1,
+      enabledPowers: [1, 2],
+    });
+
+    gameConPoderesParciales.estadoGlobal.phase = 'WAIT_DECISION';
+    gameConPoderesParciales.estadoGlobal.jugadores[0].cartaPendiente = makeCard(10);
+
+    const resultado = manager.descartarCartaPendiente(gameConPoderesParciales, 'u1');
+
+    expect(resultado.resultadoHabilidad.requiereResolverHabilidad).toBe(false);
+    expect(gameConPoderesParciales.estadoGlobal.phase).toBe('WAIT_DRAW');
+    expect(gameConPoderesParciales.estadoGlobal.turn).toBe(1);
+  });
+
+  it('inicia con 2 barajas y deja el tamaño esperado de mazo', () => {
+    const gameDosBarajas = manager.inicioPartida('ROOM-2D', jugadoresIniciales, {
+      deckCount: 2,
+      enabledPowers: [...AVAILABLE_POWERS],
+    });
+
+    // 2 barajas: 110 cartas totales. Con 2 jugadores se reparten 8 cartas (4 por jugador).
+    expect(gameDosBarajas.estadoGlobal.numBarajas).toBe(2);
+    expect(gameDosBarajas.estadoGlobal.cartasVigentes).toHaveLength(102);
+  });
+
+  it('respeta enabledPowers vacio al crear partida', () => {
+    const gameSinPoderes = manager.inicioPartida('ROOM-NO-POWERS', jugadoresIniciales, {
+      deckCount: 1,
+      enabledPowers: [],
+    });
+
+    expect(gameSinPoderes.estadoGlobal.habilidadesActivadas).toEqual([]);
   });
 
   it('descartar carta pendiente avanza turno y vuelve a WAIT_DRAW', () => {
@@ -101,6 +138,74 @@ describe('GameManager', () => {
     expect(game.estadoGlobal.cuboTurnosRestantes).toBe(3);
   });
 
+  it('en pareja solo cuenta una carta del mismo numero', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(7, 'corazones'),
+      makeCard(7, 'picas'),
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(7);
+  });
+
+  it('en trio la suma del grupo pasa a 0 puntos', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(9, 'corazones'),
+      makeCard(9, 'picas'),
+      makeCard(9, 'rombos'),
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(0);
+  });
+
+  it('con 4 cartas o mas del mismo numero el grupo suma -3 puntos', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(5, 'corazones'),
+      makeCard(5, 'picas'),
+      makeCard(5, 'treboles'),
+      makeCard(5, 'rombos'),
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(-3);
+  });
+
+  it('las reducciones de grupo no se aplican a jokers', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(8, 'corazones'),
+      makeCard(8, 'picas'),
+      {
+        carta: 53,
+        palo: 'joker',
+        habilidad: 'ninguna',
+        puntos: -1,
+        protegida: false,
+      },
+    ];
+
+    // Pareja de 8 -> 8 puntos. Joker mantiene su valor (-1).
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(7);
+  });
+
+  it('en pareja de reyes cuenta la carta de menor puntaje', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      {
+        carta: 13,
+        palo: 'picas',
+        habilidad: 'ninguna',
+        puntos: 20,
+        protegida: false,
+      },
+      {
+        carta: 13,
+        palo: 'corazones',
+        habilidad: 'ninguna',
+        puntos: 0,
+        protegida: false,
+      },
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(0);
+  });
+
   it('reacción carta-sobre-otra bloquea por primer solicitante', () => {
     const aceptadoU1 = manager.solicitarColocarCartaSobreOtra(game.gameId, 'u1');
     const rechazadoU2 = manager.solicitarColocarCartaSobreOtra(game.gameId, 'u2');
@@ -146,7 +251,6 @@ describe('GameManager', () => {
 
     const persisted = manager.exportarEstadoPersistido(game);
 
-    expect(persisted.gameId).toBe(game.gameId);
     expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
     expect(game.estadoGlobal.jugadores[0].cartaPendiente).toBeUndefined();
   });
@@ -169,19 +273,24 @@ describe('GameManager', () => {
 
   it('carga estado persistido restaurando cartas protegidas y habilidades almacenadas', () => {
     const persisted = {
-      gameId: 'SAVE01',
       turn: 1,
       habilidadesActivadas: [],
       discardedCards: [12],
       players: [
         {
           userId: 'u1',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 0,
           cards: [101, 14, 27, 40],
           habilidades: [7],
         },
         {
           userId: 'u2',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 1,
           cards: [2, 15, 28, 41],
           habilidades: [8],
@@ -201,19 +310,25 @@ describe('GameManager', () => {
 
   it('rechaza carga con cartas duplicadas en snapshot', () => {
     const persisted = {
-      gameId: 'SAVE-DUP',
       turn: 0,
+      deckCount: 1,
       habilidadesActivadas: [],
       discardedCards: [1],
       players: [
         {
           userId: 'u1',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 0,
           cards: [1, 14, 27, 40],
           habilidades: [],
         },
         {
           userId: 'u2',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 1,
           cards: [2, 15, 28, 41],
           habilidades: [],
@@ -228,19 +343,24 @@ describe('GameManager', () => {
 
   it('rechaza carga con turno persistido fuera de rango', () => {
     const persisted = {
-      gameId: 'SAVE02',
       turn: 2,
       habilidadesActivadas: [],
       discardedCards: [10],
       players: [
         {
           userId: 'u1',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 0,
           cards: [1, 14, 27, 40],
           habilidades: [],
         },
         {
           userId: 'u2',
+          controlador: 'humano',
+          dificultadBot: undefined,
+          nombreEnPartida: undefined,
           turnOrder: 1,
           cards: [2, 15, 28, 41],
           habilidades: [],

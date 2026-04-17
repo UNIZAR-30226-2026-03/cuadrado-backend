@@ -29,8 +29,18 @@ const createGame = (overrides: Partial<Game> = {}): Game => ({
     habilidadesActivadas: [],
     turnoJugadores: ['u1', 'u2'],
     jugadores: [
-      { cartasMano: [], habilidadesActivadas: [], saltarTurno: false },
-      { cartasMano: [], habilidadesActivadas: [], saltarTurno: false },
+      {
+        cartasMano: [],
+        controlador: 'humano',
+        habilidadesActivadas: [],
+        saltarTurno: false,
+      },
+      {
+        cartasMano: [],
+        controlador: 'humano',
+        habilidadesActivadas: [],
+        saltarTurno: false,
+      },
     ],
   },
   updatedAt: new Date(),
@@ -42,10 +52,12 @@ const baseRules: RulesConfig = {
   turnTimeSeconds: 30,
   isPrivate: false,
   fillWithBots: false,
+  dificultadBots: 'media',
 };
 
 const createPlayer = (overrides: Partial<Player> = {}): Player => ({
   userId: 'u1',
+  controlador: 'humano',
   idInRoom: 0,
   socketId: 'socket-1',
   isHost: true,
@@ -143,7 +155,7 @@ describe('GameGateway', () => {
     };
   });
 
-  it('inicia partida desde cero cuando no llega savedGameId', async () => {
+  it('inicia partida desde cero cuando no llega savedRoomName', async () => {
     const room = createRoom({ code: 'ROOM1', hostId: 'u1', started: false });
     const game = createGame();
 
@@ -172,7 +184,7 @@ describe('GameGateway', () => {
     });
   });
 
-  it('inicia partida cargando guardada cuando llega savedGameId', async () => {
+  it('inicia partida cargando guardada cuando llega savedRoomName', async () => {
     const room = createRoom({ code: 'ROOM1', hostId: 'u1', started: false });
     const game = createGame({ gameId: 'SAVE01' });
 
@@ -181,11 +193,11 @@ describe('GameGateway', () => {
     gameService.getGameById.mockReturnValue(game);
 
     const result = await gateway.iniciarPartida(client as Socket, {
-      savedGameId: 'SAVE01',
+      savedRoomName: 'Sala Test',
     });
 
     expect(gameService.cargarPartidaGuardada).toHaveBeenCalledWith(
-      'SAVE01',
+      'Sala Test',
       'u1',
       'socket-1',
     );
@@ -205,13 +217,22 @@ describe('GameGateway', () => {
     });
   });
 
-  it('devuelve error websocket si la sala ya estaba iniciada', async () => {
+  it('permite iniciar partida aunque la sala llegue marcada como iniciada', async () => {
     const room = createRoom({ code: 'ROOM1', hostId: 'u1', started: true });
-    gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
+    const game = createGame();
 
-    await expect(
-      gateway.iniciarPartida(client as Socket, undefined),
-    ).rejects.toBeInstanceOf(WsException);
+    gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
+    gameService.inicioPartida.mockReturnValue(game);
+    gameService.getGameById.mockReturnValue(game);
+
+    const result = await gateway.iniciarPartida(client as Socket, undefined);
+
+    expect(result).toEqual({
+      success: true,
+      gameId: 'G1',
+      roomId: 'ROOM1',
+      loadedFromSave: false,
+    });
   });
 
   it('guardar-y-cerrar emite room:closed y expulsa sockets de la sala', async () => {
@@ -221,6 +242,7 @@ describe('GameGateway', () => {
     gameService.guardarYcerrarPartida.mockResolvedValue({
       gameId: 'G1',
       roomCode: 'ROOM1',
+      savedRoomName: 'Sala Test',
     });
 
     const result = await gateway.guardarYCerrarPartida(client as Socket, { gameId: 'G1' });
@@ -230,7 +252,7 @@ describe('GameGateway', () => {
     expect(emitByTarget.ROOM1).toHaveBeenCalledWith('room:closed', {
       reason: 'Host saved and closed the room',
       roomCode: 'ROOM1',
-      savedGameId: 'G1',
+      savedRoomName: 'Sala Test',
     });
     expect(inMock).toHaveBeenCalledWith('ROOM1');
     expect(socketsLeaveMock).toHaveBeenCalledWith('ROOM1');
@@ -241,6 +263,7 @@ describe('GameGateway', () => {
       {
         gameId: 'SAVE1',
         creatorId: 'u1',
+        roomName: 'Sala Test',
         updatedAt: new Date(),
         players: ['u1', 'u2'],
       },

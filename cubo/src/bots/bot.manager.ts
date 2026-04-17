@@ -9,6 +9,13 @@ import { PermisoHabilidad } from '../game/game.manager';
 export abstract class BotManager implements BotStrategy {
   protected logger = new Logger(this.constructor.name);
 
+  /**
+   * Mapa de botId -> array de cartas vistas en su mano
+   * Estructura: cartasVistas[índice] = Card | null
+   * null = carta desconocida, Card = carta que el bot ha visto
+   */
+  private cartasVistasPorBot = new Map<string, (Card | null)[]>();
+
   abstract decidir(
     partida: Game,
     botId: string,
@@ -101,5 +108,65 @@ export abstract class BotManager implements BotStrategy {
    */
   protected decisonAleatoria(probabilidad: number = 0.5): boolean {
     return Math.random() < probabilidad;
+  }
+
+  /**
+   * Inicializa el array de cartas vistas para un bot
+   * Se debe llamar al inicio de la partida
+   */
+  protected inicializarCartasVistas(botId: string, tamano: number): void {
+    this.cartasVistasPorBot.set(botId, Array(tamano).fill(null));
+  }
+
+  /**
+   * Obtiene el array de cartas vistas para un bot
+   * Estructura: (Card | null)[] donde null = desconocida
+   */
+  protected obtenerCartasVistas(botId: string): (Card | null)[] {
+    return this.cartasVistasPorBot.get(botId) ?? [];
+  }
+
+  /**
+   * Registra que el bot ha visto una carta en una posición específica
+   * Se usa cuando intercambia o cuando ejecuta habilidad de ver carta
+   */
+  protected registrarCartaVista(botId: string, indice: number, carta: Card): void {
+    const vistas = this.obtenerCartasVistas(botId);
+    if (vistas[indice] === undefined) {
+      this.inicializarCartasVistas(botId, indice + 1);
+    }
+    vistas[indice] = carta;
+  }
+
+  /**
+   * Obtiene los índices de cartas desconocidas (null) en la mano del bot
+   * Útil para elegir qué carta intercambiar cuando no la conoce
+   */
+  protected obtenerIndicesDesconocidas(botId: string): number[] {
+    const vistas = this.obtenerCartasVistas(botId);
+    return vistas
+      .map((c, idx) => c === null ? idx : -1)
+      .filter((idx) => idx !== -1);
+  }
+
+  /**
+   * Obtiene solo las cartas CONOCIDAS del bot (filtra nulls)
+   * Usa esto para análisis de proporciones, puntos, etc.
+   */
+  protected obtenerCartasConocidas(botId: string): Card[] {
+    const vistas = this.obtenerCartasVistas(botId);
+    return vistas.filter((c): c is Card => c !== null);
+  }
+
+  /**
+   * Registra cuando el bot intercambia la carta robada (pendiente)
+   * La carta que intercambia es ahora visible en su mano
+   */
+  protected registrarIntercambioPendiente(
+    botId: string,
+    indiceEnMano: number,
+    cartaPendiente: Card,
+  ): void {
+    this.registrarCartaVista(botId, indiceEnMano, cartaPendiente);
   }
 }

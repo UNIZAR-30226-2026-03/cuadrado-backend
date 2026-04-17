@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, UseGuards, Request, Query } from '@nestjs/common';
 import { SkinsService } from './skins.service';
 import { JwtGuard } from '../auth/guards/jwt.guard';
 
@@ -43,7 +43,8 @@ export class SkinsController {
     // 6. Obtener skins equipadas
     @UseGuards(JwtGuard)
     @Get('equipped')
-    async getEquippedSkins(@Request() req: any) {
-        return this.skinsService.getEquippedSkins(req.user.username);
+    async getEquippedSkins(@Request() req: any, @Query('username') username?: string) {
+        const targetUsername = username?.trim() || req.user.username;
+        return this.skinsService.getEquippedSkins(targetUsername);
     }
 }

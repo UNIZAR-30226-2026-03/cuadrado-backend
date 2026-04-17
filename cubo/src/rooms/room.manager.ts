@@ -5,7 +5,14 @@ import {
   Room,
   RoomState,
 } from './interfaces/room.interface';
-import { RulesConfig } from './interfaces/rules-config.interface';
+import {
+  AVAILABLE_POWERS,
+  DEFAULT_ROOM_BOT_DIFFICULTY,
+  DEFAULT_DECK_COUNT,
+  ROOM_BOT_DIFFICULTIES,
+  RoomBotDifficulty,
+  RulesConfig,
+} from './interfaces/rules-config.interface';
 import { BotsService } from '../bots/bots.service';
 import { playerController } from "./interfaces/room.interface";
 import { dificultadBot } from "./interfaces/room.interface";
@@ -17,6 +24,7 @@ const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 export interface CreateRoomInput {
   name: string;
   rules: RulesConfig;
+  savedRoomName?: string;
 }
 
 @Injectable()
@@ -43,6 +51,8 @@ export class RoomManager {
       throw new Error('Room name is required');
     }
 
+    const normalizedRules = this.normalizarReglas(input.rules);
+
     const roomCode = this.generateUniqueRoomCode();
     const players = new Map<string, Player>();
     const jugadorNuevo = this.createPlayer(userId, socketId, true, 0);
@@ -53,7 +63,8 @@ export class RoomManager {
       code: roomCode,
       hostId: userId,
       players,
-      rules: input.rules,
+      rules: normalizedRules,
+      savedRoomName: input.savedRoomName,
       started: false,
       createdAt: new Date(),
     };
@@ -62,6 +73,142 @@ export class RoomManager {
     this.userToRoom.set(userId, room.code); 
 
     return room;
+  }
+
+  private normalizarReglas(rules: RulesConfig): RulesConfig {
+    const deckCount = this.normalizarDeckCount(rules.deckCount);
+    const maxPlayersLimit = deckCount === 1 ? 4 : 8;
+    const dificultadBots = this.normalizarDificultadBots(rules.dificultadBots);
+
+    if (!Number.isInteger(rules.maxPlayers) || rules.maxPlayers < 2) {
+      throw new Error('maxPlayers debe ser un entero entre 2 y 8');
+    }
+
+    if (rules.maxPlayers > maxPlayersLimit) {
+      throw new Error(
+        `Con ${deckCount} baraja(s) el máximo de jugadores es ${maxPlayersLimit}`,
+      );
+    }
+
+    const enabledPowers = this.normalizarHabilidades(rules.enabledPowers);
+
+    return {
+      maxPlayers: rules.maxPlayers,
+      turnTimeSeconds: rules.turnTimeSeconds,
+      isPrivate: rules.isPrivate,
+      fillWithBots: rules.fillWithBots,
+      dificultadBots,
+      deckCount,
+      enabledPowers,
+    };
+  }
+
+  private normalizarDificultadBots(
+    dificultad: unknown,
+  ): RoomBotDifficulty {
+    if (dificultad == null) {
+      return DEFAULT_ROOM_BOT_DIFFICULTY;
+    }
+
+    if (
+      typeof dificultad === 'string' &&
+      ROOM_BOT_DIFFICULTIES.includes(dificultad as RoomBotDifficulty)
+    ) {
+      return dificultad as RoomBotDifficulty;
+    }
+
+    throw new Error(
+      `dificultadBots debe ser una de: ${ROOM_BOT_DIFFICULTIES.join(', ')}`,
+    );
+  }
+
+  private normalizarDeckCount(deckCount: number): 1 | 2 {
+    if (deckCount == null) {
+      return DEFAULT_DECK_COUNT;
+    }
+
+    if (deckCount !== 1 && deckCount !== 2) {
+      throw new Error('deckCount debe ser 1 o 2');
+    }
+
+    return deckCount;
+  }
+
+  private normalizarHabilidades(enabledPowers: number[]): number[] {
+    if (!Array.isArray(enabledPowers)) {
+      return [...AVAILABLE_POWERS];
+    }
+
+    if (enabledPowers.length === 0) {
+      return [];
+    }
+
+    const normalized = new Set<number>();
+
+    for (const power of enabledPowers as unknown[]) {
+      const value = this.parsePowerValue(power);
+      if (value == null) {
+        throw new Error(`enabledPowers contiene valores inválidos: ${String(power)}`);
+      }
+
+      if (!AVAILABLE_POWERS.includes(value as (typeof AVAILABLE_POWERS)[number])) {
+        throw new Error(`La habilidad ${value} no es válida`);
+      }
+
+      normalized.add(value);
+    }
+
+    return [...normalized];
+  }
+
+  //ChatGPT ha ayudado a hacer esta funcion
+  private parsePowerValue(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isInteger(value)) {
+      return value;
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (/^\d+$/.test(trimmed)) {
+        return Number(trimmed);
+      }
+
+      const normalized = trimmed
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/-/g, '_');
+
+      if (normalized === 'a' || normalized === 'poder_a' || normalized === 'podera') {
+        return 1;
+      }
+      if (normalized === 'j' || normalized === 'poder_j' || normalized === 'poderj') {
+        return 11;
+      }
+
+      const aliases: Record<string, number> = {
+        intercambiar_todas: 1,
+        hacer_robar_carta: 2,
+        proteger_carta: 3,
+        saltar_turno_jugador: 4,
+        roba_y_sigue: 6,
+        jugador_menos_puntuacion: 7,
+        desactivar_proxima_habilidad: 8,
+        intercambiar_carta: 9,
+        ver_carta_propia: 10,
+        ver_carta_propia_y_rival: 11,
+      };
+
+      if (aliases[normalized] != null) {
+        return aliases[normalized];
+      }
+
+      const firstNumber = trimmed.match(/\d+/);
+      if (firstNumber) {
+        return Number(firstNumber[0]);
+      }
+    }
+
+    return null;
   }
 
   // Unir a una sala existente usando el código de la sala.
@@ -245,7 +392,10 @@ export class RoomManager {
       throw new Error('All players must be connected to start');
     }
     // Agregar bots si está configurado
-    this.botsService.agregarBotsARoom(room, 'facil');
+    this.botsService.agregarBotsARoom(
+      room,
+      room.rules.dificultadBots ?? DEFAULT_ROOM_BOT_DIFFICULTY,
+    );
 
     
     if (room.players.size < 2) {
@@ -255,6 +405,25 @@ export class RoomManager {
     room.started = true;
 
     return room;
+  }
+
+  getSavedRoomName(roomCode: string): string | null {
+    const room = this.getRoomByCode(roomCode);
+
+    if (!room?.savedRoomName) {
+      return null;
+    }
+
+    return room.savedRoomName;
+  }
+
+  clearSavedRoomName(roomCode: string): void {
+    const room = this.getRoomByCode(roomCode);
+    if (!room) {
+      return;
+    }
+
+    room.savedRoomName = undefined;
   }
 
   /*

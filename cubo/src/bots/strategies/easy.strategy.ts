@@ -13,7 +13,7 @@ export class EasyBotStrategy extends BotManager {
   decidir(
     partida: Game,
     botId: string,
-    _contexto: PermisoHabilidad | null,
+    contexto: PermisoHabilidad | null,
   ): BotAction {
     const phase = partida.estadoGlobal.phase;
 

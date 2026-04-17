@@ -31,6 +31,14 @@ export class RoomsService {
     return this.roomManager.startRoom(userId, roomCode);
   }
 
+  getSavedRoomName(roomCode: string) {
+    return this.roomManager.getSavedRoomName(roomCode);
+  }
+
+  clearSavedRoomName(roomCode: string) {
+    this.roomManager.clearSavedRoomName(roomCode);
+  }
+
   resetRoomAfterGame(roomCode: string) {
     return this.roomManager.resetRoomAfterGame(roomCode);
   }

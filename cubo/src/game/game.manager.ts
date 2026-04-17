@@ -6,7 +6,11 @@ import {
   FinPartidaMotivo,
 } from './interfaces/game.interface';
 import { Card, PaloCarta, Habilidad } from './interfaces/card.interface';
-import { dificultadBot, playerController } from 'src/rooms/interfaces/room.interface';
+import { dificultadBot, playerController } from '../rooms/interfaces/room.interface';
+import {
+  AVAILABLE_POWERS,
+  DEFAULT_DECK_COUNT,
+} from '../rooms/interfaces/rules-config.interface';
 
 const ROOM_CODE_LENGTH = 6;
 const ROOM_CODE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -91,8 +95,8 @@ export interface PersistedPlayerState {
 }
 
 export interface PersistedGameState {
-  gameId: string;
   turn: number;
+  deckCount?: number;
   habilidadesActivadas: number[];
   discardedCards: number[];
   players: PersistedPlayerState[];
@@ -103,6 +107,11 @@ export interface EstadoInicialJugador {
   controlador: playerController;
   dificultadBot?: dificultadBot;
   nombreEnPartida?: string;
+}
+
+export interface ConfiguracionInicioPartida {
+  deckCount: number;
+  enabledPowers: number[];
 }
 
 export const SIN_CARTAS_ERROR_MESSAGE =
@@ -373,6 +382,10 @@ export class GameManager {
   ): ResultadoRegistroHabilidad {
     this.limpiarPermisoHabilidad(partida.gameId);
 
+    if (!this.estaHabilidadActiva(partida, cartaDescartada.carta)) {
+      return { tipo: 'sin-efecto-inmediato', requiereResolverHabilidad: false };
+    }
+
     if (cartaDescartada.carta === 10) {
       this.registrarPermisoHabilidad(partida, {
         jugadorId,
@@ -483,6 +496,10 @@ export class GameManager {
     return { tipo: 'sin-efecto-inmediato', requiereResolverHabilidad: false };
   }
 
+  private estaHabilidadActiva(partida: Game, carta: number): boolean {
+    return partida.estadoGlobal.habilidadesActivadas.includes(carta);
+  }
+
   resolverTimeoutTurno(partida: Game): boolean {
     if (partida.estado !== 'activo') {
       return false;
@@ -532,36 +549,38 @@ export class GameManager {
   }
 
   // función que crea la baraja inicial del juego
-  private static rellenarBaraja(): Card[] {
+  private static rellenarBaraja(numBarajas: number = 1): Card[] {
     const baraja: Card[] = [];
     const vtipo: PaloCarta[] = ['corazones', 'picas', 'treboles', 'rombos'];
 
-    for (let tipo = 0; tipo < vtipo.length; tipo++) {
-      for (let i = 1; i <= 13; i++) {
-        let puntos = 0;
-        if (
-          i === 13 &&
-          (vtipo[tipo] === 'corazones' || vtipo[tipo] === 'rombos')
-        ) {
-          puntos = 0;
-        } else if (
-          i === 13 &&
-          (vtipo[tipo] === 'picas' || vtipo[tipo] === 'treboles')
-        ) {
-          puntos = 20;
-        } else {
-          puntos = i;
+    for (let deck = 0; deck < numBarajas; deck++) {
+      for (let tipo = 0; tipo < vtipo.length; tipo++) {
+        for (let i = 1; i <= 13; i++) {
+          let puntos = 0;
+          if (
+            i === 13 &&
+            (vtipo[tipo] === 'corazones' || vtipo[tipo] === 'rombos')
+          ) {
+            puntos = 0;
+          } else if (
+            i === 13 &&
+            (vtipo[tipo] === 'picas' || vtipo[tipo] === 'treboles')
+          ) {
+            puntos = 20;
+          } else {
+            puntos = i;
+          }
+          baraja.push(
+            GameManager.crearCarta(i, vtipo[tipo], 'ninguna', puntos, false),
+          );
         }
+      }
+
+      for (let i = 1; i <= 3; i++) {
         baraja.push(
-          GameManager.crearCarta(i, vtipo[tipo], 'ninguna', puntos, false),
+          GameManager.crearCarta(52 + i, 'joker', 'ninguna', -1, false),
         );
       }
-    }
-
-    for (let i = 1; i <= 3; i++) {
-      baraja.push(
-        GameManager.crearCarta(52 + i, 'joker', 'ninguna', -1, false),
-      );
     }
 
     return baraja;
@@ -710,8 +729,8 @@ export class GameManager {
     );
 
     return {
-      gameId: partida.gameId,
       turn: partida.estadoGlobal.turn,
+      deckCount: partida.estadoGlobal.numBarajas,
       habilidadesActivadas: [...partida.estadoGlobal.habilidadesActivadas],
       discardedCards: partida.estadoGlobal.cartasDescartadas.map((card) =>
         GameManager.encodeCard(card),
@@ -760,7 +779,10 @@ export class GameManager {
       saltarTurno: false,
     }));
 
-    const encodedDeck = GameManager.rellenarBaraja().map((card) =>
+    const deckCount = persisted.deckCount ?? DEFAULT_DECK_COUNT;
+    const habilidadesActivadas = [...persisted.habilidadesActivadas];
+
+    const encodedDeck = GameManager.rellenarBaraja(deckCount).map((card) =>
       GameManager.encodeCard(card),
     );
 
@@ -791,11 +813,13 @@ export class GameManager {
     }
 
     const turn = persisted.turn;
+    const gameCode = this.generateUniqueRoomCode();
 
     const estadoGlobal: GameState = {
       turn,
       phase: 'WAIT_DRAW',
       turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + EXTRA_TIME_FIRST_TURN,
+      numBarajas: deckCount,
       cuboActivado: false,
       cuboTurnosRestantes: undefined,
       cuboSolicitanteId: null,
@@ -803,13 +827,13 @@ export class GameManager {
       cartasDescartadas: persisted.discardedCards.map((code) =>
         GameManager.decodeCard(code),
       ),
-      habilidadesActivadas: [...persisted.habilidadesActivadas],
+      habilidadesActivadas,
       turnoJugadores: playersOrdered.map((player) => player.userId),
       jugadores: estadoJugadores,
     };
 
     const partida: Game = {
-      gameId: persisted.gameId,
+      gameId: gameCode,
       roomId: codigoSala,
       estado: 'activo',
       estadoGlobal,
@@ -826,8 +850,8 @@ export class GameManager {
     return partida;
   }
 
-private static mezclarArray<T>(array: T[]): T[] {
-  const resultado = [...array];
+  private static mezclarArray<T>(array: T[]): T[] {
+    const resultado = [...array];
 
     for (let i = resultado.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -955,13 +979,19 @@ private static mezclarArray<T>(array: T[]): T[] {
   inicioPartida(
     codigoSala: string,
     jugadoresIniciales: EstadoInicialJugador[],
+    configuracion?: ConfiguracionInicioPartida,
   ): Game {
     if (this.roomToGame.has(codigoSala)) {
       throw new Error('Ya existe una partida activa para la sala');
     }
 
     const numJugadores = jugadoresIniciales.length;
-    const aux: Card[] = GameManager.rellenarBaraja();
+    const numBarajas = (configuracion?.deckCount ?? DEFAULT_DECK_COUNT) as 1 | 2;
+    const habilidadesActivadas = configuracion
+      ? [...configuracion.enabledPowers]
+      : [...AVAILABLE_POWERS];
+
+    const aux: Card[] = GameManager.rellenarBaraja(numBarajas);
     const baraja: Card[] = GameManager.mezclarArray(aux);
     const gameCode = this.generateUniqueRoomCode();
     const estadoJugadores: PlayerState[] = jugadoresIniciales.map((jugador) => ({
@@ -978,12 +1008,13 @@ private static mezclarArray<T>(array: T[]): T[] {
       turn: 0,
       phase: 'WAIT_DRAW',
       turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + EXTRA_TIME_FIRST_TURN, // se le da un tiempo extra en el primer turno
+      numBarajas,
       cuboActivado: false,
       cuboTurnosRestantes: undefined,
       cuboSolicitanteId: null,
       cartasVigentes: baraja,
       cartasDescartadas: [],
-      habilidadesActivadas: [],
+      habilidadesActivadas,
       turnoJugadores: jugadoresIniciales.map((jugador) => jugador.userId),
       jugadores: estadoJugadores,
     };
@@ -1359,7 +1390,45 @@ private static mezclarArray<T>(array: T[]): T[] {
     const idEnPartida = this.obtenerIndiceJugador(partida, userId);
     const cartasJugador =
       partida.estadoGlobal.jugadores[idEnPartida].cartasMano;
-    return cartasJugador.reduce((total, carta) => total + carta.puntos, 0);
+
+    const cartasNoJoker = cartasJugador.filter((carta) => carta.palo !== 'joker');
+    const jokers = cartasJugador.filter((carta) => carta.palo === 'joker');
+
+    const cartasPorNumero = new Map<number, Card[]>();
+
+    for (const carta of cartasNoJoker) {
+      const grupo = cartasPorNumero.get(carta.carta) ?? []; //agrupo por numeros
+      grupo.push(carta);
+      cartasPorNumero.set(carta.carta, grupo);
+    }
+
+    let puntosNoJoker = 0;
+
+    for (const grupo of cartasPorNumero.values()) {
+      if (grupo.length === 1) {
+        puntosNoJoker += grupo[0].puntos;
+        continue;
+      }
+
+      if (grupo.length === 2) {
+        // En parejas solo cuenta una de las cartas
+        puntosNoJoker += Math.min(grupo[0].puntos, grupo[1].puntos); //min por si hay pareja de reyes
+        continue;
+      }
+
+      if (grupo.length === 3) {
+        //puntosNoJoker += 0; 
+        continue;
+      }
+
+      //si es grupo de 4 o mas
+      puntosNoJoker += -8;
+    }
+
+    //Siempre -1 ya lo cambiaremos si cambiamos su puntuacion
+    const puntosJoker = jokers.length * -1;
+
+    return puntosNoJoker + puntosJoker;
   }
 
   solicitarCubo(partida: Game, userId: string): { activado: boolean } {

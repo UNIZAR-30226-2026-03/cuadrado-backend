@@ -1,6 +1,7 @@
-import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Request, UseGuards, Patch, Body } from '@nestjs/common';
 import { JwtGuard } from '../auth/guards/jwt.guard';
 import { UsersService } from './users.service';
+import { UpdateSettingsDto } from './dto/update-settings.dto';
 
 @Controller('users')
 export class UsersController {
@@ -16,6 +17,18 @@ export class UsersController {
   @Get('me/position')
   async getMyPosition(@Request() req: any) {
     return this.usersService.getEloPosition(req.user.username);
+  }
+
+  @UseGuards(JwtGuard)
+  @Get('me/settings')
+  async getMySettings(@Request() req: any) {
+    return this.usersService.getMySettings(req.user.username);
+  }
+
+  @UseGuards(JwtGuard)
+  @Patch('me/settings')
+  async updateMySettings(@Request() req: any, @Body() updateSettingsDto: UpdateSettingsDto) {
+    return this.usersService.updateMySettings(req.user.username, updateSettingsDto);
   }
 
   @Get('top')
