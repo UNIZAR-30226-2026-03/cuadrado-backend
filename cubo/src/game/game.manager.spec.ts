@@ -138,6 +138,74 @@ describe('GameManager', () => {
     expect(game.estadoGlobal.cuboTurnosRestantes).toBe(3);
   });
 
+  it('en pareja solo cuenta una carta del mismo numero', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(7, 'corazones'),
+      makeCard(7, 'picas'),
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(7);
+  });
+
+  it('en trio la suma del grupo pasa a 0 puntos', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(9, 'corazones'),
+      makeCard(9, 'picas'),
+      makeCard(9, 'rombos'),
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(0);
+  });
+
+  it('con 4 cartas o mas del mismo numero el grupo suma -3 puntos', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(5, 'corazones'),
+      makeCard(5, 'picas'),
+      makeCard(5, 'treboles'),
+      makeCard(5, 'rombos'),
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(-3);
+  });
+
+  it('las reducciones de grupo no se aplican a jokers', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      makeCard(8, 'corazones'),
+      makeCard(8, 'picas'),
+      {
+        carta: 53,
+        palo: 'joker',
+        habilidad: 'ninguna',
+        puntos: -1,
+        protegida: false,
+      },
+    ];
+
+    // Pareja de 8 -> 8 puntos. Joker mantiene su valor (-1).
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(7);
+  });
+
+  it('en pareja de reyes cuenta la carta de menor puntaje', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      {
+        carta: 13,
+        palo: 'picas',
+        habilidad: 'ninguna',
+        puntos: 20,
+        protegida: false,
+      },
+      {
+        carta: 13,
+        palo: 'corazones',
+        habilidad: 'ninguna',
+        puntos: 0,
+        protegida: false,
+      },
+    ];
+
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(0);
+  });
+
   it('reacción carta-sobre-otra bloquea por primer solicitante', () => {
     const aceptadoU1 = manager.solicitarColocarCartaSobreOtra(game.gameId, 'u1');
     const rechazadoU2 = manager.solicitarColocarCartaSobreOtra(game.gameId, 'u2');

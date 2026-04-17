@@ -1390,7 +1390,45 @@ export class GameManager {
     const idEnPartida = this.obtenerIndiceJugador(partida, userId);
     const cartasJugador =
       partida.estadoGlobal.jugadores[idEnPartida].cartasMano;
-    return cartasJugador.reduce((total, carta) => total + carta.puntos, 0);
+
+    const cartasNoJoker = cartasJugador.filter((carta) => carta.palo !== 'joker');
+    const jokers = cartasJugador.filter((carta) => carta.palo === 'joker');
+
+    const cartasPorNumero = new Map<number, Card[]>();
+
+    for (const carta of cartasNoJoker) {
+      const grupo = cartasPorNumero.get(carta.carta) ?? []; //agrupo por numeros
+      grupo.push(carta);
+      cartasPorNumero.set(carta.carta, grupo);
+    }
+
+    let puntosNoJoker = 0;
+
+    for (const grupo of cartasPorNumero.values()) {
+      if (grupo.length === 1) {
+        puntosNoJoker += grupo[0].puntos;
+        continue;
+      }
+
+      if (grupo.length === 2) {
+        // En parejas solo cuenta una de las cartas
+        puntosNoJoker += Math.min(grupo[0].puntos, grupo[1].puntos); //min por si hay pareja de reyes
+        continue;
+      }
+
+      if (grupo.length === 3) {
+        //puntosNoJoker += 0; 
+        continue;
+      }
+
+      //si es grupo de 4 o mas
+      puntosNoJoker += -3;
+    }
+
+    //Siempre -1 ya lo cambiaremos si cambiamos su puntuacion
+    const puntosJoker = jokers.length * -1;
+
+    return puntosNoJoker + puntosJoker;
   }
 
   solicitarCubo(partida: Game, userId: string): { activado: boolean } {
