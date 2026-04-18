@@ -10,7 +10,7 @@ export interface Game {
     gameId : string;
     roomId : string;
     estado: 'activo' | 'parado' | 'terminado';
-    ranking?: Array<{userId: string; puntaje: number}>;
+    ranking?: Array<{userId: string; puntaje: number; posicion: number}>;
     finPartidaMotivo?: FinPartidaMotivo;
     estadoGlobal: GameState;
     updatedAt : Date;
