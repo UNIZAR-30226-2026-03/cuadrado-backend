@@ -41,6 +41,7 @@ type ResultadoDescartarPendiente = {
 export type TipoPermisoHabilidad =
   | 'ver-carta-propia'
   | 'ver-carta-propia-y-rival'
+  | 'ver-carta-todos'
   | 'intercambiar-carta'
   | 'intercambiar-todas'
   | 'hacer-robar-carta'
@@ -51,6 +52,7 @@ export type TipoPermisoHabilidad =
 export type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia' })
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia-y-rival' })
+  | (PermisoHabilidadBase & { tipo: 'ver-carta-todos' })
   | (PermisoHabilidadBase & {
       tipo: 'intercambiar-carta';
       estado?: 'esperando-iniciador' | 'esperando-rival';
@@ -66,6 +68,12 @@ export type PermisoHabilidad =
 export interface ResultadoVerCarta {
   cartaPropia: Card;
   cartaRival?: Card;
+}
+
+export interface CartaReveladaTodos {
+  jugadorId: string;
+  indexCarta: number;
+  carta: Card;
 }
 
 export interface ReshuffleInfo {
@@ -435,6 +443,15 @@ export class GameManager {
       this.registrarPermisoHabilidad(partida, {
         jugadorId,
         tipo: 'saltar-turno-jugador',
+        turno: partida.estadoGlobal.turn,
+      });
+      return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
+    }
+
+    if (cartaDescartada.carta === 5) {
+      this.registrarPermisoHabilidad(partida, {
+        jugadorId,
+        tipo: 'ver-carta-todos',
         turno: partida.estadoGlobal.turn,
       });
       return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
@@ -1336,6 +1353,41 @@ export class GameManager {
       cartaPropia,
       cartaRival,
     };
+  }
+
+  /** Poder del 5: revela una carta aleatoria (no protegida) de cada rival. */
+  verCartaTodos(partida: Game, solicitanteId: string): CartaReveladaTodos[] {
+    this.validarAccionTurno(partida, solicitanteId, 'RESOLVE_SKILL');
+
+    this.obtenerPermisoHabilidadActiva(partida, solicitanteId, ['ver-carta-todos']);
+
+    this.cancelarHabilidadInmediataSiCorresponde(partida);
+
+    const indicePropioJugador = this.obtenerIndiceJugador(partida, solicitanteId);
+    const cartasReveladas: CartaReveladaTodos[] = [];
+
+    for (let i = 0; i < partida.estadoGlobal.jugadores.length; i++) {
+      if (i === indicePropioJugador) continue;
+
+      const jugadorRival = partida.estadoGlobal.jugadores[i];
+      const candidatos = jugadorRival.cartasMano
+        .map((carta, idx) => ({ carta, idx }))
+        .filter(({ carta }) => !carta.protegida);
+
+      if (candidatos.length === 0) continue;
+
+      const elegido = candidatos[Math.floor(Math.random() * candidatos.length)];
+      cartasReveladas.push({
+        jugadorId: partida.estadoGlobal.turnoJugadores[i],
+        indexCarta: elegido.idx,
+        carta: elegido.carta,
+      });
+    }
+
+    this.limpiarPermisoHabilidad(partida.gameId);
+    this.avanzarTurno(partida);
+
+    return cartasReveladas;
   }
 
   intercambiarTodasCartas(

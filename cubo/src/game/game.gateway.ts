@@ -16,6 +16,7 @@ import { FinPartidaMotivo, Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
 import { dificultadBot } from '../rooms/interfaces/room.interface';
 import {
+  CartaReveladaTodos,
   HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE,
   SIN_CARTAS_ERROR_MESSAGE,
 } from './game.manager';
@@ -119,6 +120,10 @@ interface intercambiarCartaInteractivo {
   rivalId: string,
 }
 
+interface verCartaTodosPayload {
+  gameId: string;
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -183,6 +188,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       return;
     }
 
+    // Notifica el inicio del turno actual si corresponde (fase WAIT_DRAW)
+    this.notificarTurnoIniciadoSiActivo(partida);
+
     const gameId = partida.gameId;
     if (
       this.processingBotGames.has(gameId) ||
@@ -246,6 +254,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         if (!actionApplied) {
           return;
         }
+
+        // Notifica si el turno avanzó a fase WAIT_DRAW (turno intermedio de bots)
+        this.notificarTurnoIniciadoSiActivo(partida);
       }
 
       shouldReschedule = true;
@@ -273,6 +284,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     const estadoTurnoActual = partida.estadoGlobal.jugadores[partida.estadoGlobal.turn];
     if (estadoTurnoActual.controlador === 'bot') {
       this.scheduleBotProcessing(partida);
+    } else {
+      // Turno de humano tras batch de bots: notificar directamente
+      this.notificarTurnoIniciadoSiActivo(partida);
     }
   }
 
@@ -722,6 +736,25 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       cantidadCartasMazo: partida.estadoGlobal.cartasVigentes.length,
       cantidadCartasDescartadas: partida.estadoGlobal.cartasDescartadas.length,
+    });
+  }
+
+  /** Emite game:turno-iniciado solo si la partida está en fase WAIT_DRAW. */
+  private notificarTurnoIniciadoSiActivo(partida: Game) {
+    if (
+      partida.estado !== 'activo' ||
+      partida.estadoGlobal.phase !== 'WAIT_DRAW'
+    ) {
+      return;
+    }
+    const userId =
+      partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
+    this.server.to(partida.roomId).emit('game:turno-iniciado', {
+      gameId: partida.gameId,
+      turn: partida.estadoGlobal.turn,
+      userId,
+      phase: 'WAIT_DRAW',
+      turnDeadlineAt: partida.estadoGlobal.turnDeadlineAt,
     });
   }
 
@@ -1433,7 +1466,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     }
   }
   
-   @SubscribeMessage('game:preparar-intercambio-carta')
+   @SubscribeMessage('game:intercambiar-carta-interactivo')
   intercambiarCartaInteractivo(
     @ConnectedSocket() client : Socket,
     @MessageBody() payload: intercambiarCartaInteractivo,
@@ -1510,6 +1543,49 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 ////////////////////////////////////////////////////////////////////////////////
 //                              HABILIDADES DE CARTAS                         //
 ////////////////////////////////////////////////////////////////////////////////
+
+  /** Poder del 5: el jugador activo ve una carta aleatoria de cada rival. */
+  @SubscribeMessage('game:ver-carta-todos')
+  verCartaTodos(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: verCartaTodosPayload,
+  ) {
+    let partida: Game | undefined;
+    let userId: string | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(client, payload.gameId);
+      partida = contexto.partida;
+      userId = contexto.userId;
+
+      const cartasReveladas: CartaReveladaTodos[] =
+        this.gameService.verCartaTodos(partida, userId);
+
+      // Solo el solicitante recibe las cartas reveladas
+      this.server.to(client.id).emit('game:cartas-reveladas-todos', {
+        gameId: payload.gameId,
+        cartasReveladas,
+      });
+
+      this.scheduleBotProcessing(partida);
+
+      return {
+        success: true,
+        gameId: partida.gameId,
+      };
+    } catch (error) {
+      if (this.esErrorHabilidadDenegada(error) && partida && userId) {
+        this.notificarTodosHabilidadDenegada(partida, userId, 'ver-carta-todos');
+        this.finalizarPartidaYSincronizarSala(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          habilidadDenegada: true,
+        };
+      }
+      this.handleWsError(error);
+    }
+  }
 
 
 
