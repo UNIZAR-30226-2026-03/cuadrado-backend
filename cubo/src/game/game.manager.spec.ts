@@ -157,7 +157,7 @@ describe('GameManager', () => {
     expect(manager.calcularPuntosJugador(game, 'u1')).toBe(0);
   });
 
-  it('con 4 cartas o mas del mismo numero el grupo suma -3 puntos', () => {
+  it('con 4 cartas o mas del mismo numero el grupo suma -8 puntos', () => {
     game.estadoGlobal.jugadores[0].cartasMano = [
       makeCard(5, 'corazones'),
       makeCard(5, 'picas'),
@@ -165,7 +165,7 @@ describe('GameManager', () => {
       makeCard(5, 'rombos'),
     ];
 
-    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(-3);
+    expect(manager.calcularPuntosJugador(game, 'u1')).toBe(-8);
   });
 
   it('las reducciones de grupo no se aplican a jokers', () => {
@@ -370,6 +370,36 @@ describe('GameManager', () => {
 
     expect(() => manager.cargarEstadoPersistido('ROOM03', persisted)).toThrow(
       'Turno persistido inválido',
+    );
+  });
+
+  it('calcula recompensas por posicion con empates (1,1,3)', () => {
+    const gameEmpate = manager.inicioPartida('ROOM-TIE', [
+      { userId: 'u1', controlador: 'humano' },
+      { userId: 'u2', controlador: 'humano' },
+      { userId: 'u3', controlador: 'humano' },
+    ]);
+
+    gameEmpate.ranking = [
+      { userId: 'u1', puntaje: 5, posicion: 1 },
+      { userId: 'u2', puntaje: 5, posicion: 1 },
+      { userId: 'u3', puntaje: 7, posicion: 3 },
+    ];
+
+    const recompensas = manager.calcularRecompensas(gameEmpate);
+    const recompensaU1 = recompensas.find((r) => r.userId === 'u1');
+    const recompensaU2 = recompensas.find((r) => r.userId === 'u2');
+    const recompensaU3 = recompensas.find((r) => r.userId === 'u3');
+
+    expect(recompensas.map((r) => r.posicion)).toEqual([1, 1, 3]);
+    expect(recompensaU1).toBeDefined();
+    expect(recompensaU2).toBeDefined();
+    expect(recompensaU3).toBeDefined();
+    expect(recompensaU1?.eloChange).toBe(recompensaU2?.eloChange);
+    expect(recompensaU1?.cubitosChange).toBe(recompensaU2?.cubitosChange);
+    expect(recompensaU3?.eloChange).toBeLessThan(recompensaU1?.eloChange ?? 0);
+    expect(recompensaU3?.cubitosChange).toBeLessThan(
+      recompensaU1?.cubitosChange ?? 0,
     );
   });
 });
