@@ -7,6 +7,7 @@ import {
   PermisoHabilidad,
   ResultadoPonerCartaSobreOtra,
   ResultadoRobarCarta,
+  CartaReveladaTodos,
 } from './game.manager';
 import { Game } from './interfaces/game.interface';
 import { dificultadBot, Room, RoomState } from '../rooms/interfaces/room.interface';
@@ -513,6 +514,10 @@ export class GameService {
       ,indexCartaPlayer
     );
   } 
+
+  verCartaTodos(partida: Game, solicitanteId: string): CartaReveladaTodos[] {
+    return this.gameManager.verCartaTodos(partida, solicitanteId);
+  }
 
   intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){
     return this.gameManager.intercambiarTodasCartas(partida, remitenteId, destinatarioId);
