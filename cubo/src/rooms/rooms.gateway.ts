@@ -318,6 +318,30 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
+      if (
+        typeof wsError === 'object' &&
+        wsError !== null &&
+        'error' in wsError
+      ) {
+        const nestedError = (wsError as { error?: unknown }).error;
+
+        if (
+          typeof nestedError === 'object' &&
+          nestedError !== null &&
+          'message' in nestedError
+        ) {
+          const nestedMessage = (nestedError as { message?: unknown }).message;
+
+          if (typeof nestedMessage === 'string') {
+            return nestedMessage;
+          }
+
+          if (Array.isArray(nestedMessage)) {
+            return nestedMessage.join(', ');
+          }
+        }
+      }
+
       return 'Unexpected room error';
     }
 
