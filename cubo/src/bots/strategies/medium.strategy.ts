@@ -174,8 +174,11 @@ export class MediumBotStrategy extends BotManager {
         };
       }
 
-      case 'jugador-menos-puntuacion':
-        return { accion: 'jugador-menos-puntuacion' };
+      case 'ver-carta-todos':
+        return { accion: 'ver-carta-todos' };
+
+      case 'decidir-intercambio-j':
+        return { accion: 'resolver-j', intercambiar: true };
 
       default:
         return { accion: 'esperar' };

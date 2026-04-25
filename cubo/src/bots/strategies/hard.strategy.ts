@@ -29,14 +29,23 @@ export class HardBotStrategy extends BotManager {
     const phase = partida.estadoGlobal.phase;
     const estado = this.obtenerEstadoBot(partida, botId);
 
-    // Inicializar cartas vistas si es el primer turno
-    if (this.obtenerCartasVistas(botId).length === 0) {
+    // Inicializar o extender cartasVistas según el tamaño actual de la mano
+    const cartasVistasActuales = this.obtenerCartasVistas(botId);
+    if (cartasVistasActuales.length === 0) {
       this.inicializarCartasVistas(botId, estado.cartasMano.length);
+    } else {
+      for (let i = cartasVistasActuales.length; i < estado.cartasMano.length; i++) {
+        cartasVistasActuales.push(null);
+      }
     }
 
     switch (phase) {
-      case 'WAIT_DRAW':
+      case 'WAIT_DRAW': {
+        if (estado.habilidadesActivadas.includes(7)) {
+          return { accion: 'jugador-menos-puntuacion' };
+        }
         return { accion: 'robar' };
+      }
 
       case 'WAIT_DECISION':
         return this.decidirConPendiente(partida, botId);
@@ -295,16 +304,11 @@ export class HardBotStrategy extends BotManager {
           };
         }
 
-        // Segundo paso: botId es quien responde (el rival ya eligió su carta, ahora el bot elige la suya)
-        if (permiso.estado === 'esperando-rival' && permiso.rivalId && permiso.indiceCartaIniciador !== undefined) {
-          // El rival ya eligió qué carta del bot quiere
-          // El bot elige qué carta de su propia mano quiere dar a cambio
-          
-          // Estrategia: elige una carta de su mano al azar
+        // Segundo paso: el bot responde al intercambio interactivo del rival
+        if (permiso.estado === 'esperando-rival' && permiso.rivalId) {
           const cartaIndex = Math.floor(Math.random() * estado.cartasMano.length);
-
           return {
-            accion: 'intercambiar-carta',
+            accion: 'intercambiar-carta-interactivo',
             cartaIndex,
             targetUserId: permiso.rivalId,
           };
@@ -391,9 +395,11 @@ export class HardBotStrategy extends BotManager {
         };
       }
 
-      case 'jugador-menos-puntuacion':
-        // Sin cambios: activar habilidad
-        return { accion: 'jugador-menos-puntuacion' };
+      case 'ver-carta-todos':
+        return { accion: 'ver-carta-todos' };
+
+      case 'decidir-intercambio-j':
+        return { accion: 'resolver-j', intercambiar: true };
 
       default:
         return { accion: 'esperar' };

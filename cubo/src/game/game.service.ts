@@ -22,6 +22,7 @@ import {
 } from '../rooms/interfaces/rules-config.interface';
 import { RoomsService } from '../rooms/rooms.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateRoomInput } from '../rooms/room.manager';
 
 export interface ValidatedGameContext {
   game: Game;
@@ -406,7 +407,6 @@ export class GameService {
     socketId: string,
   ): ValidatedGameContext {
     const game = this.gameManager.getGameById(gameId);
-    this.gameManager.resolverTimeoutTurno(game);
 
     if (game.estado !== 'activo') {
       throw new Error('La partida no está activa');
@@ -523,6 +523,10 @@ export class GameService {
     return this.gameManager.intercambiarTodasCartas(partida, remitenteId, destinatarioId);
   }
 
+  resolverDecisionJ(partida: Game, userId: string, intercambiar: boolean) {
+    return this.gameManager.resolverDecisionJ(partida, userId, intercambiar);
+  }
+
   hacerRobarCarta(partida: Game, userId : string, adversarioId : string){
     return this.gameManager.hacerRobarCarta(partida,userId,adversarioId);
   }
@@ -543,6 +547,14 @@ export class GameService {
     return this.gameManager.desactivarProximaHabilidad(partida, userId);
   }
 
+  getHabilidadesSinEfectoRestantes(gameId: string): number {
+    return this.gameManager.getHabilidadesSinEfectoRestantes(gameId);
+  }
+
+  getHabilidadesSinEfectoDiferidasRestantes(gameId: string): number {
+    return this.gameManager.getHabilidadesSinEfectoDiferidasRestantes(gameId);
+  }
+
   calcularPuntosJugador(partida: Game, userId: string){
     return this.gameManager.calcularPuntosJugador(partida, userId);
   }
@@ -558,6 +570,22 @@ export class GameService {
   resetRoomAfterGameAndGetState(roomCode: string): RoomState | null {
     this.roomsService.resetRoomAfterGame(roomCode);
     return this.roomsService.getRoomState(roomCode);
+  }
+
+  getRoomByUserId(userId: string): Room | null {
+    return this.roomsService.getRoomByUserId(userId);
+  }
+
+  desvincularUsuarioDeSalaActiva(userId: string): Room | null {
+    return this.roomsService.desvincularUsuarioDeSalaActiva(userId);
+  }
+
+  createRoom(userId: string, socketId: string, input: CreateRoomInput): Room {
+    return this.roomsService.createRoom(userId, socketId, input);
+  }
+
+  joinRoom(userId: string, socketId: string, roomCode: string): Room {
+    return this.roomsService.joinRoom(userId, socketId, roomCode);
   }
 
   solicitarColocarCartaSobreOtra(idPartida : string, userId: string){
@@ -722,8 +750,6 @@ export class GameService {
     return [...normalized];
   }
 
-  //estoy harto de poner esto hago funcion y ala
-  //typescript es pesadito
   private requireRoomName(roomName: string | null): string {
     if (!roomName) {
       throw new Error('La partida guardada no contiene el nombre de sala');
