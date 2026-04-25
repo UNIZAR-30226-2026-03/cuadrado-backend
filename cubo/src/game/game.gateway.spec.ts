@@ -5,6 +5,7 @@ import {
   ValidatedGameContext,
   ValidatedStartContext,
 } from './game.service';
+import { AccionProtegidaCanceladaError } from './game.manager';
 import { GameGateway } from './game.gateway';
 import { Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
@@ -134,9 +135,12 @@ describe('GameGateway', () => {
       listarPartidasGuardadas: jest.fn(),
       robarCarta: jest.fn(),
       descartarPendiente: jest.fn(),
+      verCarta: jest.fn(),
       getGameById: jest.fn(),
       getBotDecisionContext: jest.fn(),
       resolverTimeoutsTurnoActivos: jest.fn().mockReturnValue([]),
+      getHabilidadesSinEfectoRestantes: jest.fn().mockReturnValue(0),
+      getHabilidadesSinEfectoDiferidasRestantes: jest.fn().mockReturnValue(0),
       calcularRecompensas: jest.fn().mockReturnValue([]),
       aplicarRecompensas: jest.fn(),
       resetRoomAfterGameAndGetState: jest.fn().mockReturnValue(null),
@@ -304,7 +308,7 @@ describe('GameGateway', () => {
       'game:decision-requerida',
       expect.objectContaining({
         gameId: 'G1',
-        game: expect.objectContaining({ carta: 4 }),
+        carta: expect.objectContaining({ carta: 4 }),
       }),
     );
   });
@@ -356,6 +360,45 @@ describe('GameGateway', () => {
     expect(emitByTarget.ROOM1).toHaveBeenCalledWith(
       'game:descartar-pendiente',
       expect.objectContaining({ carta }),
+    );
+  });
+
+  it('verCarta emite cancelacion cuando una proteccion bloquea la accion', () => {
+    const game = createGame();
+    const error = new AccionProtegidaCanceladaError(
+      'visualizar',
+      'u1',
+      'u2',
+      [{ jugadorId: 'u2', indexCarta: 1 }],
+    );
+
+    gameService.validateGameContext.mockReturnValue(createGameContext(game));
+    gameService.verCarta.mockImplementation(() => {
+      throw error;
+    });
+
+    const result = gateway.verCarta(client as Socket, {
+      gameId: 'G1',
+      indexCarta: 0,
+      playerId: 'u2',
+      indexCartaPlayer: 1,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      gameId: 'G1',
+      accionCancelada: true,
+    });
+    expect(emitByTarget.ROOM1).toHaveBeenCalledWith(
+      'game:accion-protegida-cancelada',
+      {
+        gameId: 'G1',
+        accion: 'visualizar',
+        actorId: 'u1',
+        propietarioId: 'u2',
+        proteccionesConsumidas: [{ jugadorId: 'u2', indexCarta: 1 }],
+        message: error.message,
+      },
     );
   });
 

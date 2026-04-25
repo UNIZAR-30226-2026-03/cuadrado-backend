@@ -17,6 +17,7 @@ import { Card } from './interfaces/card.interface';
 import { dificultadBot } from '../rooms/interfaces/room.interface';
 import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
 import {
+  AccionProtegidaCanceladaError,
   CartaReveladaTodos,
   CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE,
   HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE,
@@ -418,7 +419,11 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         return true;
       }
       if (this.esErrorCartaProtegidaBloquea(error) && partida) {
-        this.notificarTodosHabilidadDenegada(partida, botId, accion.accion);
+        if (error instanceof AccionProtegidaCanceladaError) {
+          this.notificarTodosAccionProtegidaCancelada(partida, error);
+        } else {
+          this.notificarTodosHabilidadDenegada(partida, botId, accion.accion);
+        }
         this.finalizarPartidaYSincronizarSala(partida);
         return true;
       }
@@ -836,6 +841,20 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     });
   }
 
+  private notificarTodosAccionProtegidaCancelada(
+    partida: Game,
+    error: AccionProtegidaCanceladaError,
+  ) {
+    this.server.to(partida.roomId).emit('game:accion-protegida-cancelada', {
+      gameId: partida.gameId,
+      accion: error.accion,
+      actorId: error.actorId,
+      propietarioId: error.propietarioId,
+      proteccionesConsumidas: error.proteccionesConsumidas,
+      message: error.message,
+    });
+  }
+
   private notificarTodosTurnoJugadorSaltado(
     partida: Game,
     remitenteId: string,
@@ -1114,8 +1133,9 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
   private esErrorCartaProtegidaBloquea(error: unknown): boolean {
     return (
-      error instanceof Error &&
-      error.message === CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE
+      error instanceof AccionProtegidaCanceladaError ||
+      (error instanceof Error &&
+        error.message === CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE)
     );
   }
 
@@ -1358,11 +1378,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarCartaPayload,
   ){
+    let partida: Game | undefined;
+    let remitenteId: string | undefined;
+
     try {
-      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
+      remitenteId = contexto.userId;
 
       const resultado = this.gameService.intercambiarCarta(partida, remitenteId,
         payload.destinatarioId, payload.numCartaRemitente, 
@@ -1377,6 +1402,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         //aqui lo del todo...
       };
     } catch (error) {
+      if (error instanceof AccionProtegidaCanceladaError && partida && remitenteId) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
+      }
       this.handleWsError(error);
     }
 
@@ -1431,6 +1464,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           habilidadDenegada: true,
         };
       }
+      if (error instanceof AccionProtegidaCanceladaError && partida && userId) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
+      }
       this.handleWsError(error);
     }
 
@@ -1467,11 +1510,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       return { success: true };
     } catch (error){
       if (this.esErrorCartaProtegidaBloquea(error) && partida && remitenteId) {
-        this.notificarTodosHabilidadDenegada(partida, remitenteId, 'intercambiar-todas');
+        if (error instanceof AccionProtegidaCanceladaError) {
+          this.notificarTodosAccionProtegidaCancelada(partida, error);
+        } else {
+          this.notificarTodosHabilidadDenegada(partida, remitenteId, 'intercambiar-todas');
+        }
         this.finalizarPartidaYSincronizarSala(partida);
-        this.notificarEstadoPoder8(partida, null);
         this.scheduleBotProcessing(partida);
-        return { success: true, gameId: partida.gameId, habilidadDenegada: true };
+        return { success: true, gameId: partida.gameId, accionCancelada: true };
       }
       if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
         this.notificarTodosHabilidadDenegada(partida, remitenteId, 'intercambiar-todas');
@@ -1490,11 +1536,12 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     @MessageBody() payload: resolverJPayload,
   ) {
     let partida: Game | undefined;
+    let userId: string | undefined;
 
     try {
       const contexto = this.getValidatedGameContext(client, payload.gameId);
       partida = contexto.partida;
-      const userId = contexto.userId;
+      userId = contexto.userId;
 
       const resultado = this.gameService.resolverDecisionJ(
         partida,
@@ -1517,6 +1564,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
       return { success: true, gameId: partida.gameId };
     } catch (error) {
+      if (error instanceof AccionProtegidaCanceladaError && partida && userId) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
+      }
       this.handleWsError(error);
     }
   }
@@ -1918,6 +1975,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     } catch (error) {
       if (this.esErrorSinCartas(error) && partida) {
         this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+      }
+      if (error instanceof AccionProtegidaCanceladaError && partida) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
       }
       this.handleWsError(error);
     }

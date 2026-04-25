@@ -145,6 +145,25 @@ export const GUARDADO_INVALIDO_ERROR_MESSAGE =
 export const CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE =
   'La habilidad fue bloqueada por la proteccion activa del rival';
 
+export type AccionProtegidaCancelada = 'intercambiar' | 'visualizar';
+
+export interface ProteccionConsumida {
+  jugadorId: string;
+  indexCarta: number;
+}
+
+export class AccionProtegidaCanceladaError extends Error {
+  constructor(
+    public readonly accion: AccionProtegidaCancelada,
+    public readonly actorId: string,
+    public readonly propietarioId: string,
+    public readonly proteccionesConsumidas: ProteccionConsumida[],
+  ) {
+    super(CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE);
+    this.name = 'AccionProtegidaCanceladaError';
+  }
+}
+
 type AccionTurno =
   | 'DRAW'
   | 'RESOLVE_PENDING'
@@ -1007,29 +1026,137 @@ export class GameManager {
     return carta;
   }
 
+  private cancelarPorProteccionesConsumidas(
+    partida: Game,
+    actorId: string,
+    propietarioId: string,
+    accion: AccionProtegidaCancelada,
+    protecciones: Array<ProteccionConsumida & { carta: Card }>,
+    finalizarHabilidad = false,
+  ): never {
+    for (const proteccion of protecciones) {
+      proteccion.carta.protegida = false;
+    }
+
+    if (finalizarHabilidad) {
+      this.limpiarPermisoHabilidad(partida.gameId);
+      this.avanzarTurno(partida);
+    } else {
+      partida.updatedAt = new Date();
+    }
+
+    throw new AccionProtegidaCanceladaError(
+      accion,
+      actorId,
+      propietarioId,
+      protecciones.map(({ jugadorId, indexCarta }) => ({
+        jugadorId,
+        indexCarta,
+      })),
+    );
+  }
+
   private consumirProteccionSiCartaAjena(
     partida: Game,
     actorId: string,
     propietarioId: string,
-    carta: Card,
-    accion: 'intercambiar' | 'visualizar',
+    indexCarta: number,
+    accion: AccionProtegidaCancelada,
+    finalizarHabilidad = false,
   ) {
+    const carta = this.obtenerCartaDeJugador(partida, propietarioId, indexCarta);
+
     if (actorId === propietarioId || !carta.protegida) {
       return;
     }
 
-    carta.protegida = false;
-    partida.updatedAt = new Date();
+    this.cancelarPorProteccionesConsumidas(
+      partida,
+      actorId,
+      propietarioId,
+      accion,
+      [{ jugadorId: propietarioId, indexCarta, carta }],
+      finalizarHabilidad,
+    );
+  }
 
-    if (accion === 'intercambiar') {
-      throw new Error(
-        'La carta seleccionada está protegida y no puede intercambiarse',
-      );
+  private consumirProteccionesDeManoAjena(
+    partida: Game,
+    actorId: string,
+    propietarioId: string,
+    accion: AccionProtegidaCancelada,
+    finalizarHabilidad = false,
+  ) {
+    if (actorId === propietarioId) {
+      return;
     }
 
-    throw new Error(
-      'La carta seleccionada está protegida y no puede visualizarse',
+    const idPropietario = this.obtenerIndiceJugador(partida, propietarioId);
+    const protecciones = partida.estadoGlobal.jugadores[
+      idPropietario
+    ].cartasMano
+      .map((carta, indexCarta) => ({ jugadorId: propietarioId, indexCarta, carta }))
+      .filter(({ carta }) => carta.protegida);
+
+    if (protecciones.length === 0) {
+      return;
+    }
+
+    this.cancelarPorProteccionesConsumidas(
+      partida,
+      actorId,
+      propietarioId,
+      accion,
+      protecciones,
+      finalizarHabilidad,
     );
+  }
+
+  private intercambiarCartasManteniendoProtecciones(
+    cartasA: Card[],
+    indexA: number,
+    cartasB: Card[],
+    indexB: number,
+  ) {
+    const cartaA = cartasA[indexA];
+    const cartaB = cartasB[indexB];
+
+    if (!cartaA || !cartaB) {
+      throw new Error('La carta seleccionada no existe');
+    }
+
+    const proteccionA = cartaA.protegida;
+    const proteccionB = cartaB.protegida;
+
+    cartaA.protegida = proteccionB;
+    cartaB.protegida = proteccionA;
+    cartasA[indexA] = cartaB;
+    cartasB[indexB] = cartaA;
+  }
+
+  private intercambiarManosManteniendoProtecciones(
+    estadoJugadorA: PlayerState,
+    estadoJugadorB: PlayerState,
+  ) {
+    const proteccionesA = estadoJugadorA.cartasMano.map(
+      (carta) => carta.protegida,
+    );
+    const proteccionesB = estadoJugadorB.cartasMano.map(
+      (carta) => carta.protegida,
+    );
+    const cartasA = [...estadoJugadorA.cartasMano];
+    const cartasB = [...estadoJugadorB.cartasMano];
+
+    for (let i = 0; i < cartasB.length; i++) {
+      cartasB[i].protegida = proteccionesA[i] ?? false;
+    }
+
+    for (let i = 0; i < cartasA.length; i++) {
+      cartasA[i].protegida = proteccionesB[i] ?? false;
+    }
+
+    estadoJugadorA.cartasMano = cartasB;
+    estadoJugadorB.cartasMano = cartasA;
   }
 
   inicioPartida(
@@ -1139,6 +1266,7 @@ export class GameManager {
     }
 
     const carta = cartas[numCarta];
+    carta.protegida = false;
     partida.estadoGlobal.cartasDescartadas.push(carta);
     cartas.splice(numCarta, 1);
 
@@ -1160,6 +1288,7 @@ export class GameManager {
       throw new Error('No hay carta pendiente');
     }
 
+    cartaPendiente.protegida = false;
     partida.estadoGlobal.cartasDescartadas.push(cartaPendiente);
     partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;
 
@@ -1207,6 +1336,9 @@ export class GameManager {
       throw new Error('No tienes esa carta en la mano');
     }
 
+    const mantenerProteccion = cartaDescartar.protegida;
+    cartaDescartar.protegida = false;
+    cartaPendiente.protegida = mantenerProteccion;
     partida.estadoGlobal.cartasDescartadas.push(cartaDescartar);
     cartas[numCarta] = cartaPendiente;
     partida.estadoGlobal.jugadores[idEnPartida].cartaPendiente = undefined;
@@ -1253,15 +1385,16 @@ export class GameManager {
       partida,
       remitenteId,
       destinatarioId,
-      cartaDestinatario,
+      numCartaDestinatario,
       'intercambiar',
     );
 
-    partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano[
-      numCartaDestinatario
-    ] = cartaRemitente;
-    partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano[numCartaRemitente] =
-      cartaDestinatario;
+    this.intercambiarCartasManteniendoProtecciones(
+      partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano,
+      numCartaRemitente,
+      partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano,
+      numCartaDestinatario,
+    );
   }
 
   intercambiarCartaBot(
@@ -1308,15 +1441,17 @@ export class GameManager {
       partida,
       remitenteId,
       destinatarioId,
-      cartaDestinatario,
+      numCartaDestinatario,
       'intercambiar',
+      true,
     );
 
-    partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano[
-      numCartaDestinatario
-    ] = cartaRemitente;
-    partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano[numCartaRemitente] =
-      cartaDestinatario;
+    this.intercambiarCartasManteniendoProtecciones(
+      partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano,
+      numCartaRemitente,
+      partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano,
+      numCartaDestinatario,
+    );
 
     this.limpiarPermisoHabilidad(partida.gameId);
     this.avanzarTurno(partida);
@@ -1384,8 +1519,9 @@ export class GameManager {
       partida,
       solicitanteId,
       rivalId,
-      cartaRival,
+      indexCartaRival,
       'visualizar',
+      true,
     );
 
     // Carta J: no avanza turno todavía; el jugador debe decidir si intercambiar.
@@ -1435,10 +1571,21 @@ export class GameManager {
         throw new Error('Las cartas del intercambio J ya no existen');
       }
 
-      partida.estadoGlobal.jugadores[idPropio].cartasMano[indexCartaPropia] =
-        cartaRival;
-      partida.estadoGlobal.jugadores[idRival].cartasMano[indexCartaRival] =
-        cartaPropia;
+      this.consumirProteccionSiCartaAjena(
+        partida,
+        userId,
+        rivalId,
+        indexCartaRival,
+        'intercambiar',
+        true,
+      );
+
+      this.intercambiarCartasManteniendoProtecciones(
+        partida.estadoGlobal.jugadores[idPropio].cartasMano,
+        indexCartaPropia,
+        partida.estadoGlobal.jugadores[idRival].cartasMano,
+        indexCartaRival,
+      );
       partida.updatedAt = new Date();
     }
 
@@ -1496,28 +1643,18 @@ export class GameManager {
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
     const idEnPartidaD = this.obtenerIndiceJugador(partida, destinatarioId);
-    const cartaProtegidaDestinatario = partida.estadoGlobal.jugadores[
-      idEnPartidaD
-    ].cartasMano.find((carta) => carta.protegida);
+    this.consumirProteccionesDeManoAjena(
+      partida,
+      remitenteId,
+      destinatarioId,
+      'intercambiar',
+      true,
+    );
 
-    if (cartaProtegidaDestinatario) {
-      // La protección se consume pero bloquea el intercambio. El turno avanza.
-      cartaProtegidaDestinatario.protegida = false;
-      partida.updatedAt = new Date();
-      this.limpiarPermisoHabilidad(partida.gameId);
-      this.avanzarTurno(partida);
-      throw new Error(CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE);
-    }
-
-    const cartasRemitente = [
-      ...partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano,
-    ];
-
-    partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano = [
-      ...partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano,
-    ];
-
-    partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano = cartasRemitente;
+    this.intercambiarManosManteniendoProtecciones(
+      partida.estadoGlobal.jugadores[idEnPartidaR],
+      partida.estadoGlobal.jugadores[idEnPartidaD],
+    );
 
     this.limpiarPermisoHabilidad(partida.gameId);
     this.avanzarTurno(partida);
@@ -2013,16 +2150,19 @@ export class GameManager {
       throw new Error('La carta seleccionada por el iniciador no existe');
     }
 
-    const cartaIniciador = cartasManoIniciador[permiso.indiceCartaIniciador];
-    const cartaRival = cartasManoRival[numCarta];
-
-    if (!cartaIniciador || !cartaRival) {
+    if (
+      !cartasManoIniciador[permiso.indiceCartaIniciador] ||
+      !cartasManoRival[numCarta]
+    ) {
       throw new Error('No se ha podido resolver el intercambio de cartas');
     }
 
-    cartasManoIniciador[permiso.indiceCartaIniciador] =
-      cartaRival;
-    cartasManoRival[numCarta] = cartaIniciador;
+    this.intercambiarCartasManteniendoProtecciones(
+      cartasManoIniciador,
+      permiso.indiceCartaIniciador,
+      cartasManoRival,
+      numCarta,
+    );
 
     this.limpiarPermisoHabilidad(partida.gameId);
     this.avanzarTurno(partida);
