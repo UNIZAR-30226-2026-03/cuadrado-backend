@@ -1879,8 +1879,13 @@ export class GameManager {
         throw new Error(SIN_CARTAS_ERROR_MESSAGE);
       }
 
-      partida.estadoGlobal.jugadores[idEnPartida].cartasMano.push(cartaRobada);
-      numCartas = partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+      const cartasManoFallo = partida.estadoGlobal.jugadores[idEnPartida].cartasMano;
+      if (cartasManoFallo.length < 6) {
+        cartasManoFallo.push(cartaRobada);
+      } else {
+        partida.estadoGlobal.cartasVigentes.push(cartaRobada);
+      }
+      numCartas = cartasManoFallo.length;
       // si falla, libera el bloqueo para permitir nuevos intentos
       this.abrirVentanaReaccionGlobal(partida);
       accionCorrecta = false;
@@ -1927,7 +1932,11 @@ export class GameManager {
       throw new Error(SIN_CARTAS_ERROR_MESSAGE);
     }
 
-    estadoJugador.cartasMano[estadoJugador.cartasMano.length] = cartaRobada;
+    if (estadoJugador.cartasMano.length < 6) {
+      estadoJugador.cartasMano[estadoJugador.cartasMano.length] = cartaRobada;
+    } else {
+      partida.estadoGlobal.cartasVigentes.push(cartaRobada);
+    }
 
     reshuffleInfo.cantidadCartasMazo =
       partida.estadoGlobal.cartasVigentes.length;
