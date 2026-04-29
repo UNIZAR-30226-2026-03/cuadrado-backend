@@ -1,4 +1,5 @@
 import {
+  AccionProtegidaCanceladaError,
   GameManager,
   GUARDADO_INVALIDO_ERROR_MESSAGE,
   EstadoInicialJugador,
@@ -93,7 +94,7 @@ describe('GameManager', () => {
 
   it('descartar carta pendiente avanza turno y vuelve a WAIT_DRAW', () => {
     game.estadoGlobal.phase = 'WAIT_DECISION';
-    game.estadoGlobal.jugadores[0].cartaPendiente = makeCard(5);
+    game.estadoGlobal.jugadores[0].cartaPendiente = makeCard(12);
 
     const cartaDescartada = manager.descartarCartaPendiente(game, 'u1');
 
@@ -204,6 +205,124 @@ describe('GameManager', () => {
     ];
 
     expect(manager.calcularPuntosJugador(game, 'u1')).toBe(0);
+  });
+
+  it('intercambiar carta propia protegida conserva la proteccion en la posicion del remitente', () => {
+    const cartaPropia = makeCard(9, 'corazones', true);
+    const cartaRival = makeCard(2, 'picas', false);
+    game.estadoGlobal.jugadores[0].cartasMano = [cartaPropia];
+    game.estadoGlobal.jugadores[1].cartasMano = [cartaRival];
+
+    manager.intercambiarCarta(game, 'u1', 'u2', 0, 0);
+
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0]).toBe(cartaRival);
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0].protegida).toBe(true);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0]).toBe(cartaPropia);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0].protegida).toBe(false);
+  });
+
+  it('intercambiar carta protegida de rival cancela accion y consume la proteccion', () => {
+    const cartaPropia = makeCard(9, 'corazones', false);
+    const cartaRival = makeCard(2, 'picas', true);
+    game.estadoGlobal.jugadores[0].cartasMano = [cartaPropia];
+    game.estadoGlobal.jugadores[1].cartasMano = [cartaRival];
+
+    expect(() => manager.intercambiarCarta(game, 'u1', 'u2', 0, 0)).toThrow(
+      AccionProtegidaCanceladaError,
+    );
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0]).toBe(cartaPropia);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0]).toBe(cartaRival);
+    expect(cartaRival.protegida).toBe(false);
+  });
+
+  it('resolver intercambio J mantiene la proteccion de la carta propia seleccionada', () => {
+    const cartaPropia = makeCard(11, 'corazones', true);
+    const cartaRival = makeCard(2, 'picas', false);
+    game.estadoGlobal.jugadores[0].cartasMano = [cartaPropia];
+    game.estadoGlobal.jugadores[1].cartasMano = [cartaRival];
+    game.estadoGlobal.phase = 'WAIT_SKILL';
+    (manager as any).permisosHabilidad.set(game.gameId, {
+      jugadorId: 'u1',
+      tipo: 'decidir-intercambio-j',
+      turno: game.estadoGlobal.turn,
+      indexCartaPropia: 0,
+      rivalId: 'u2',
+      indexCartaRival: 0,
+    });
+
+    manager.resolverDecisionJ(game, 'u1', true);
+
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0]).toBe(cartaRival);
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0].protegida).toBe(true);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0]).toBe(cartaPropia);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0].protegida).toBe(false);
+  });
+
+  it('intercambiar todas cancela y consume todas las protecciones del rival', () => {
+    const cartasU1 = [makeCard(1, 'corazones'), makeCard(2, 'corazones')];
+    const cartasU2 = [makeCard(3, 'picas', true), makeCard(4, 'picas', true)];
+    game.estadoGlobal.jugadores[0].cartasMano = cartasU1;
+    game.estadoGlobal.jugadores[1].cartasMano = cartasU2;
+    game.estadoGlobal.phase = 'WAIT_SKILL';
+    (manager as any).permisosHabilidad.set(game.gameId, {
+      jugadorId: 'u1',
+      tipo: 'intercambiar-todas',
+      turno: game.estadoGlobal.turn,
+    });
+
+    expect(() => manager.intercambiarTodasCartas(game, 'u1', 'u2')).toThrow(
+      AccionProtegidaCanceladaError,
+    );
+    expect(game.estadoGlobal.jugadores[0].cartasMano).toBe(cartasU1);
+    expect(game.estadoGlobal.jugadores[1].cartasMano).toBe(cartasU2);
+    expect(cartasU2.every((carta) => carta.protegida === false)).toBe(true);
+    expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
+    expect(game.estadoGlobal.turn).toBe(1);
+  });
+
+  it('intercambiar todas mantiene las protecciones del remitente si el rival no bloquea', () => {
+    const cartaProtegida = makeCard(1, 'corazones', true);
+    const cartaNormal = makeCard(2, 'corazones', false);
+    const cartaRivalA = makeCard(3, 'picas', false);
+    const cartaRivalB = makeCard(4, 'picas', false);
+    game.estadoGlobal.jugadores[0].cartasMano = [cartaProtegida, cartaNormal];
+    game.estadoGlobal.jugadores[1].cartasMano = [cartaRivalA, cartaRivalB];
+    game.estadoGlobal.phase = 'WAIT_SKILL';
+    (manager as any).permisosHabilidad.set(game.gameId, {
+      jugadorId: 'u1',
+      tipo: 'intercambiar-todas',
+      turno: game.estadoGlobal.turn,
+    });
+
+    manager.intercambiarTodasCartas(game, 'u1', 'u2');
+
+    expect(game.estadoGlobal.jugadores[0].cartasMano).toEqual([
+      cartaRivalA,
+      cartaRivalB,
+    ]);
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0].protegida).toBe(true);
+    expect(game.estadoGlobal.jugadores[0].cartasMano[1].protegida).toBe(false);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0]).toBe(cartaProtegida);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0].protegida).toBe(false);
+  });
+
+  it('ver carta todos ignora jugadores con todas sus cartas protegidas', () => {
+    game.estadoGlobal.jugadores[0].cartasMano = [makeCard(1)];
+    game.estadoGlobal.jugadores[1].cartasMano = [
+      makeCard(2, 'picas', true),
+      makeCard(3, 'picas', true),
+    ];
+    game.estadoGlobal.phase = 'WAIT_SKILL';
+    (manager as any).permisosHabilidad.set(game.gameId, {
+      jugadorId: 'u1',
+      tipo: 'ver-carta-todos',
+      turno: game.estadoGlobal.turn,
+    });
+
+    const reveladas = manager.verCartaTodos(game, 'u1');
+
+    expect(reveladas).toEqual([]);
+    expect(game.estadoGlobal.jugadores[1].cartasMano.every((carta) => carta.protegida)).toBe(true);
   });
 
   it('reacción carta-sobre-otra bloquea por primer solicitante', () => {

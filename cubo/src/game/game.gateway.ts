@@ -15,8 +15,11 @@ import { BotsService } from '../bots/bots.service';
 import { FinPartidaMotivo, Game } from './interfaces/game.interface';
 import { Card } from './interfaces/card.interface';
 import { dificultadBot } from '../rooms/interfaces/room.interface';
+import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
 import {
+  AccionProtegidaCanceladaError,
   CartaReveladaTodos,
+  CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE,
   HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE,
   SIN_CARTAS_ERROR_MESSAGE,
 } from './game.manager';
@@ -61,6 +64,11 @@ interface hacerRobarCartaPayload{
 interface protegerCartaPayload{
   gameId: string,
   numCarta : number,
+}
+
+interface saltarTurnoJugadorPayload {
+  gameId: string;
+  adversarioId: string;
 }
 
 interface calcularPuntosJugadorPayload{
@@ -124,6 +132,30 @@ interface verCartaTodosPayload {
   gameId: string;
 }
 
+interface resolverJPayload {
+  gameId: string;
+  intercambiar: boolean;
+}
+
+interface volverAJugarPayload {
+  gameId: string;
+}
+
+type RevanchaEstado = 'waiting-host' | 'room-ready';
+
+interface RematchSession {
+  gameId: string;
+  originalRoomCode: string;
+  roomName: string;
+  rules: RulesConfig;
+  hostId: string;
+  participantIds: Set<string>;
+  readyUserIds: Set<string>;
+  socketByUserId: Map<string, string>;
+  launched: boolean;
+  rematchRoomCode?: string;
+}
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -139,7 +171,10 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
   private timeoutTicker?: NodeJS.Timeout;
   private readonly queuedBotGames = new Set<string>();
   private readonly processingBotGames = new Set<string>();
-  private static readonly MAX_BOT_ACTIONS_PER_FLUSH = 32;
+  private readonly rematchSessions = new Map<string, RematchSession>();
+  private static readonly MAX_BOT_ACTIONS_PER_FLUSH = 1;
+  private static readonly BOT_INITIAL_DELAY_MS = 450;
+  private static readonly BOT_ACTION_DELAY_MS = 850;
 
   constructor(
     private readonly gameService: GameService,
@@ -183,7 +218,10 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     }
   }
 
-  private scheduleBotProcessing(partida: Game) {
+  private scheduleBotProcessing(
+    partida: Game,
+    delayMs: number = GameGateway.BOT_INITIAL_DELAY_MS,
+  ) {
     if (partida.estado !== 'activo') {
       return;
     }
@@ -204,7 +242,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     setTimeout(() => {
       this.queuedBotGames.delete(gameId);
       this.flushBotActions(gameId);
-    }, 0);
+    }, delayMs);
   }
 
   private flushBotActions(gameId: string) {
@@ -283,7 +321,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     const turnoActualId = partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn];
     const estadoTurnoActual = partida.estadoGlobal.jugadores[partida.estadoGlobal.turn];
     if (estadoTurnoActual.controlador === 'bot') {
-      this.scheduleBotProcessing(partida);
+      this.scheduleBotProcessing(partida, GameGateway.BOT_ACTION_DELAY_MS);
     } else {
       // Turno de humano tras batch de bots: notificar directamente
       this.notificarTurnoIniciadoSiActivo(partida);
@@ -312,6 +350,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           );
         case 'ver-carta':
           return this.ejecutarVerCartaBot(partida, botId, accion.cartaIndex);
+        case 'ver-carta-todos':
+          return this.ejecutarVerCartaTodosBot(partida, botId);
         case 'ver-carta-propia-y-rival':
           return this.ejecutarVerCartaPropiaYRivalBot(
             partida,
@@ -320,6 +360,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
             accion.targetUserId,
             accion.cartaIndexTarget,
           );
+        case 'resolver-j':
+          return this.ejecutarResolverJBot(partida, botId, accion.intercambiar ?? true);
         case 'intercambiar-carta':
           return this.ejecutarIntercambiarCartaBot(
             partida,
@@ -327,6 +369,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
             accion.cartaIndex,
             accion.targetUserId,
             accion.cartaIndexTarget,
+          );
+        case 'intercambiar-carta-interactivo':
+          return this.ejecutarIntercambiarCartaInteractivoBot(
+            partida,
+            botId,
+            accion.cartaIndex,
+            accion.targetUserId,
           );
         case 'intercambiar-todas-cartas':
           return this.ejecutarIntercambiarTodasCartasBot(
@@ -366,6 +415,17 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       if (this.esErrorHabilidadDenegada(error) && partida) {
         this.notificarTodosHabilidadDenegada(partida, botId, accion.accion);
         this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        return true;
+      }
+      if (this.esErrorCartaProtegidaBloquea(error) && partida) {
+        if (error instanceof AccionProtegidaCanceladaError) {
+          this.notificarTodosAccionProtegidaCancelada(partida, error);
+        } else {
+          this.notificarTodosHabilidadDenegada(partida, botId, accion.accion);
+        }
+        this.finalizarPartidaYSincronizarSala(partida);
+        return true;
       }
       console.error(
         `Error ejecutando acción bot ${botId} (${accion.accion}):`,
@@ -448,6 +508,12 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     return true;
   }
 
+  private ejecutarVerCartaTodosBot(partida: Game, botId: string): boolean {
+    this.gameService.verCartaTodos(partida, botId);
+    this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
   private ejecutarVerCartaPropiaYRivalBot(
     partida: Game,
     botId: string,
@@ -503,6 +569,33 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       cartaIndexRival,
     );
     this.finalizarPartidaYSincronizarSala(partida);
+    return true;
+  }
+
+  /** Paso 2 del intercambio interactivo: el bot responde como rival. */
+  private ejecutarIntercambiarCartaInteractivoBot(
+    partida: Game,
+    botId: string,
+    cartaIndex?: number,
+    iniciadorId?: string,
+  ): boolean {
+    if (cartaIndex == null || iniciadorId == null) {
+      return false;
+    }
+
+    const correcto = this.gameService.intercambiarCartaInteractivo(
+      partida,
+      botId,
+      iniciadorId,
+      cartaIndex,
+    );
+
+    this.finalizarPartidaYSincronizarSala(partida);
+
+    if (correcto) {
+      this.notificarTodosCambioCartas(partida, iniciadorId, botId);
+    }
+
     return true;
   }
 
@@ -563,6 +656,27 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     this.gameService.saltarTurnoJugador(partida, botId, rivalId);
     this.finalizarPartidaYSincronizarSala(partida);
     this.notificarTodosTurnoJugadorSaltado(partida, botId, rivalId);
+    return true;
+  }
+
+  private ejecutarResolverJBot(
+    partida: Game,
+    botId: string,
+    intercambiar: boolean,
+  ): boolean {
+    const resultado = this.gameService.resolverDecisionJ(partida, botId, intercambiar);
+
+    if (intercambiar) {
+      this.notificarTodosCambioCartas(
+        partida,
+        botId,
+        resultado.rivalId,
+        resultado.indexCartaPropia,
+        resultado.indexCartaRival,
+      );
+    }
+
+    this.finalizarPartidaYSincronizarSala(partida);
     return true;
   }
 
@@ -632,9 +746,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     });
   }
 
-  private notificarTodosCambioCartas(partida: Game, idRemitente: string,
-    idDestinatario: string , numCartaRemitente?: number, 
-    numCartaDestinatario?: number
+  private notificarTodosCambioCartas(
+    partida: Game, 
+    idRemitente: string,
+    idDestinatario: string, 
+    numCartaRemitente?: number, 
+    numCartaDestinatario?: number,
+    cardCountRemitente?: number,
+    cardCountDestinatario?: number
   ){
      this.server.to(partida.roomId).emit('game:intercambio-cartas',{
       partidaId : partida.gameId,
@@ -642,6 +761,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       destinatario: idDestinatario,
       numCartaRemitente : numCartaRemitente,
       numCartaDestinatario : numCartaDestinatario,
+      ...(cardCountRemitente !== undefined && { cardCountRemitente }),
+      ...(cardCountDestinatario !== undefined && { cardCountDestinatario }),
     });
   }
 
@@ -664,6 +785,19 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       jugadorId,
       habilidad,
+    });
+  }
+
+  private notificarEstadoPoder8(partida: Game, activadorId: string | null) {
+    const pendientes = this.gameService.getHabilidadesSinEfectoRestantes(partida.gameId);
+    const pendientesDiferidos =
+      this.gameService.getHabilidadesSinEfectoDiferidasRestantes(partida.gameId);
+
+    this.server.to(partida.roomId).emit('game:poder8-estado', {
+      gameId: partida.gameId,
+      pendientes,
+      pendientesDiferidos,
+      activadorId,
     });
   }
 
@@ -704,6 +838,20 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       gameId: partida.gameId,
       jugadorId,
       cartaIndex,
+    });
+  }
+
+  private notificarTodosAccionProtegidaCancelada(
+    partida: Game,
+    error: AccionProtegidaCanceladaError,
+  ) {
+    this.server.to(partida.roomId).emit('game:accion-protegida-cancelada', {
+      gameId: partida.gameId,
+      accion: error.accion,
+      actorId: error.actorId,
+      propietarioId: error.propietarioId,
+      proteccionesConsumidas: error.proteccionesConsumidas,
+      message: error.message,
     });
   }
 
@@ -756,6 +904,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       phase: 'WAIT_DRAW',
       turnDeadlineAt: partida.estadoGlobal.turnDeadlineAt,
     });
+    this.notificarEstadoPoder8(partida, null);
   }
 
   private notificarTodosPartidaFinalizada(
@@ -803,9 +952,172 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     //Aviso para que todos los fronts esten actualizados y sepan que ha terminado
     if (roomState) {
       this.server.to(partida.roomId).emit('room:update', roomState);
+      this.ensureRematchSession(partida, roomState);
     }
 
     return true;
+  }
+
+  private ensureRematchSession(partida: Game, roomState: { code: string; name: string; hostId: string; rules: RulesConfig; players: Array<{ userId: string; socketId: string; controlador: 'humano' | 'bot'; }>; }): RematchSession {
+    const existing = this.rematchSessions.get(partida.gameId);
+    if (existing) {
+      for (const player of roomState.players) {
+        if (player.socketId) {
+          existing.socketByUserId.set(player.userId, player.socketId);
+        }
+      }
+      return existing;
+    }
+
+    const participantIds = new Set<string>();
+    partida.estadoGlobal.turnoJugadores.forEach((userId, index) => {
+      const jugador = partida.estadoGlobal.jugadores[index];
+      if (jugador.controlador === 'humano') {
+        participantIds.add(userId);
+      }
+    });
+
+    const socketByUserId = new Map<string, string>();
+    roomState.players.forEach((player) => {
+      if (player.controlador === 'humano' && player.socketId) {
+        socketByUserId.set(player.userId, player.socketId);
+      }
+    });
+
+    const session: RematchSession = {
+      gameId: partida.gameId,
+      originalRoomCode: roomState.code,
+      roomName: roomState.name,
+      rules: roomState.rules,
+      hostId: roomState.hostId,
+      participantIds,
+      readyUserIds: new Set<string>(),
+      socketByUserId,
+      launched: false,
+    };
+
+    this.rematchSessions.set(partida.gameId, session);
+    return session;
+  }
+
+  private getRematchSessionOrThrow(gameId: string): RematchSession {
+    // Comprobar primero en el Map: la partida puede haberse limpiado ya del Map
+    // de juegos activos por limpiarEstructurasPartida al finalizar.
+    const existing = this.rematchSessions.get(gameId);
+    if (existing) {
+      return existing;
+    }
+
+    const partida = this.gameService.getGameById(gameId);
+
+    if (partida.estado !== 'terminado') {
+      throw new Error('La revancha solo está disponible al terminar la partida');
+    }
+
+    const roomState = this.gameService.getRoomState(partida.roomId);
+    if (!roomState) {
+      throw new Error('No hay una sala disponible para preparar la revancha');
+    }
+
+    return this.ensureRematchSession(partida, roomState);
+  }
+
+  private enlazarSocketASala(socketId: string, oldRoomCode: string, newRoomCode: string): void {
+    const socket = this.server.sockets.sockets.get(socketId);
+    if (!socket) {
+      return;
+    }
+
+    socket.leave(oldRoomCode);
+    socket.join(newRoomCode);
+  }
+
+  private construirPayloadRevancha(session: RematchSession, estado: RevanchaEstado) {
+    return {
+      gameId: session.gameId,
+      estado,
+      hostId: session.hostId,
+      jugadoresListos: Array.from(session.readyUserIds),
+      roomCode: session.rematchRoomCode,
+      roomName: session.roomName,
+    };
+  }
+
+  private notificarEstadoRevancha(session: RematchSession, estado: RevanchaEstado, destinatarios: Iterable<string>): void {
+    const payload = this.construirPayloadRevancha(session, estado);
+
+    for (const userId of destinatarios) {
+      const socketId = session.socketByUserId.get(userId);
+      if (!socketId) {
+        continue;
+      }
+
+      this.server.to(socketId).emit('game:revancha-estado', payload);
+    }
+  }
+
+  private crearSalaRevancha(session: RematchSession): void {
+    if (session.launched) {
+      return;
+    }
+
+    const hostSocketId = session.socketByUserId.get(session.hostId);
+    if (!hostSocketId) {
+      throw new Error('El líder no está conectado para crear la revancha');
+    }
+
+    this.gameService.desvincularUsuarioDeSalaActiva(session.hostId);
+
+    const room = this.gameService.createRoom(session.hostId, hostSocketId, {
+      name: session.roomName,
+      rules: session.rules,
+    });
+
+    this.enlazarSocketASala(hostSocketId, session.originalRoomCode, room.code);
+
+    for (const userId of session.readyUserIds) {
+      if (userId === session.hostId) {
+        continue;
+      }
+
+      const socketId = session.socketByUserId.get(userId);
+      if (!socketId) {
+        continue;
+      }
+
+      try {
+        this.gameService.desvincularUsuarioDeSalaActiva(userId);
+        this.gameService.joinRoom(userId, socketId, room.code);
+        this.enlazarSocketASala(socketId, session.originalRoomCode, room.code);
+      } catch {
+        // Si un jugador no puede unirse, el resto no se bloquea.
+      }
+    }
+
+    session.launched = true;
+    session.rematchRoomCode = room.code;
+    // Limpiar la sesión tras 5 minutos para evitar memory leak
+    setTimeout(() => this.rematchSessions.delete(session.gameId), 5 * 60 * 1000);
+
+    const roomState = this.gameService.getRoomState(room.code);
+    if (roomState) {
+      this.server.to(room.code).emit('room:update', roomState);
+    }
+  }
+
+  private unirJugadorATrasLaCreacion(session: RematchSession, userId: string, socketId: string): void {
+    if (!session.rematchRoomCode) {
+      throw new Error('La sala de revancha aún no está disponible');
+    }
+
+    this.gameService.desvincularUsuarioDeSalaActiva(userId);
+    this.gameService.joinRoom(userId, socketId, session.rematchRoomCode);
+    this.enlazarSocketASala(socketId, session.originalRoomCode, session.rematchRoomCode);
+
+    const roomState = this.gameService.getRoomState(session.rematchRoomCode);
+    if (roomState) {
+      this.server.to(session.rematchRoomCode).emit('room:update', roomState);
+    }
   }
 
   private esErrorSinCartas(error: unknown): boolean {
@@ -816,6 +1128,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     return (
       error instanceof Error &&
       error.message === HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE
+    );
+  }
+
+  private esErrorCartaProtegidaBloquea(error: unknown): boolean {
+    return (
+      error instanceof AccionProtegidaCanceladaError ||
+      (error instanceof Error &&
+        error.message === CARTA_PROTEGIDA_BLOQUEA_ERROR_MESSAGE)
     );
   }
 
@@ -968,7 +1288,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       this.notificarTodosCartaRobada(partida);
       this.server.to(client.id).emit('game:decision-requerida', {
         gameId : payload.gameId,
-        game: resultado.cartaRobada,
+        carta: resultado.cartaRobada,
       });
       this.scheduleBotProcessing(partida);
 
@@ -998,9 +1318,12 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
       this.finalizarPartidaYSincronizarSala(partida);
 
-      if(resultado.resultadoHabilidad.tipo === 'roba-y-sigue'){
-        /*implica que el jugador ha robado una carta resultante de la acción
-        de descartar un 6*/
+      if(
+        resultado.resultadoHabilidad.tipo === 'roba-y-sigue' ||
+        resultado.resultadoHabilidad.tipo === 'roba-y-decide'
+      ){
+        // El jugador descartó un 6: se emite la nueva carta al cliente.
+        // roba-y-decide: la carta queda como pendiente (WAIT_DECISION).
         this.server.to(client.id).emit('game:carta-robada-por-descartar-6', {
           gameId: payload.gameId,
           cartaRobada: resultado.resultadoHabilidad.cartaRobada,
@@ -1055,11 +1378,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarCartaPayload,
   ){
+    let partida: Game | undefined;
+    let remitenteId: string | undefined;
+
     try {
-      const { partida, userId: remitenteId } = this.getValidatedGameContext(
+      const contexto = this.getValidatedGameContext(
         client,
         payload.gameId,
       );
+      partida = contexto.partida;
+      remitenteId = contexto.userId;
 
       const resultado = this.gameService.intercambiarCarta(partida, remitenteId,
         payload.destinatarioId, payload.numCartaRemitente, 
@@ -1074,6 +1402,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         //aqui lo del todo...
       };
     } catch (error) {
+      if (error instanceof AccionProtegidaCanceladaError && partida && remitenteId) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
+      }
       this.handleWsError(error);
     }
 
@@ -1120,10 +1456,22 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       if (this.esErrorHabilidadDenegada(error) && partida && userId) {
         this.notificarTodosHabilidadDenegada(partida, userId, 'ver-carta');
         this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        this.scheduleBotProcessing(partida);
         return {
           success: true,
           gameId: partida.gameId,
           habilidadDenegada: true,
+        };
+      }
+      if (error instanceof AccionProtegidaCanceladaError && partida && userId) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
         };
       }
       this.handleWsError(error);
@@ -1137,30 +1485,102 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: intercambiarTodasPaylaod,
   ){
+    let partida: Game | undefined;
+    let remitenteId: string | undefined;
+
     try{
-      const { partida, userId: remitenteId } = this.getValidatedGameContext(
-        client,
-        payload.gameId,
-      );
+      const contexto = this.getValidatedGameContext(client, payload.gameId);
+      partida = contexto.partida;
+      remitenteId = contexto.userId;
 
       this.gameService.intercambiarTodasCartas(partida, remitenteId,
         payload.destinatarioId);
-      this.notificarTodosCambioCartas(partida,remitenteId, 
-        payload.destinatarioId);
+      
+      // Calcular los nuevos cardCounts para enviar al cliente
+      const idEnPartidaR = partida.estadoGlobal.turnoJugadores.indexOf(remitenteId);
+      const idEnPartidaD = partida.estadoGlobal.turnoJugadores.indexOf(payload.destinatarioId);
+      const cardCountRemitente = idEnPartidaR >= 0 ? partida.estadoGlobal.jugadores[idEnPartidaR].cartasMano.length : 0;
+      const cardCountDestinatario = idEnPartidaD >= 0 ? partida.estadoGlobal.jugadores[idEnPartidaD].cartasMano.length : 0;
+      
+      this.notificarTodosCambioCartas(partida, remitenteId,
+        payload.destinatarioId, undefined, undefined, cardCountRemitente, cardCountDestinatario);
+      this.finalizarPartidaYSincronizarSala(partida);
       this.scheduleBotProcessing(partida);
 
-      return {
-        success: true,
-        //Todo: rellenar bien el payload
-      };
-      } catch (error){
-        this.handleWsError(error);
+      return { success: true };
+    } catch (error){
+      if (this.esErrorCartaProtegidaBloquea(error) && partida && remitenteId) {
+        if (error instanceof AccionProtegidaCanceladaError) {
+          this.notificarTodosAccionProtegidaCancelada(partida, error);
+        } else {
+          this.notificarTodosHabilidadDenegada(partida, remitenteId, 'intercambiar-todas');
+        }
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return { success: true, gameId: partida.gameId, accionCancelada: true };
+      }
+      if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
+        this.notificarTodosHabilidadDenegada(partida, remitenteId, 'intercambiar-todas');
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        this.scheduleBotProcessing(partida);
+        return { success: true, gameId: partida.gameId, habilidadDenegada: true };
+      }
+      this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:resolver-j')
+  resolverJ(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: resolverJPayload,
+  ) {
+    let partida: Game | undefined;
+    let userId: string | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(client, payload.gameId);
+      partida = contexto.partida;
+      userId = contexto.userId;
+
+      const resultado = this.gameService.resolverDecisionJ(
+        partida,
+        userId,
+        payload.intercambiar,
+      );
+
+      if (payload.intercambiar) {
+        this.notificarTodosCambioCartas(
+          partida,
+          userId,
+          resultado.rivalId,
+          resultado.indexCartaPropia,
+          resultado.indexCartaRival,
+        );
+      }
+
+      this.finalizarPartidaYSincronizarSala(partida);
+      this.scheduleBotProcessing(partida);
+
+      return { success: true, gameId: partida.gameId };
+    } catch (error) {
+      if (error instanceof AccionProtegidaCanceladaError && partida && userId) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
+      }
+      this.handleWsError(error);
     }
   }
 
 
-   @SubscribeMessage('game:hacer-robar-carta')
-  hacerRoarCarta(
+  @SubscribeMessage('game:hacer-robar-carta')
+  hacerRobarCarta(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: hacerRobarCartaPayload,
   ){
@@ -1182,25 +1602,20 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         payload.adversarioId);
       this.scheduleBotProcessing(partida);
 
-      return {
-        success: true,
-        //Todo: rellenar bien el payload
-      };
-      } catch (error){
-        if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
-          this.notificarTodosHabilidadDenegada(
-            partida,
-            remitenteId,
-            'hacer-robar-carta',
-          );
-          this.finalizarPartidaYSincronizarSala(partida);
-          return {
-            success: true,
-            gameId: partida.gameId,
-            habilidadDenegada: true,
-          };
-        }
-        this.handleWsError(error);
+      return { success: true };
+    } catch (error) {
+      if (this.esErrorSinCartas(error) && partida) {
+        this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
+        return { success: true };
+      }
+      if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
+        this.notificarTodosHabilidadDenegada(partida, remitenteId, 'hacer-robar-carta');
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        this.scheduleBotProcessing(partida);
+        return { success: true, gameId: partida.gameId, habilidadDenegada: true };
+      }
+      this.handleWsError(error);
     }
   }
 
@@ -1236,6 +1651,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
             'proteger-carta',
           );
           this.finalizarPartidaYSincronizarSala(partida);
+          this.notificarEstadoPoder8(partida, null);
+          this.scheduleBotProcessing(partida);
           return {
             success: true,
             gameId: partida.gameId,
@@ -1243,6 +1660,50 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           };
         }
         this.handleWsError(error);
+    }
+  }
+
+  @SubscribeMessage('game:saltar-turno-jugador')
+  saltarTurnoJugador(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: saltarTurnoJugadorPayload,
+  ) {
+    let partida: Game | undefined;
+    let remitenteId: string | undefined;
+
+    try {
+      const contexto = this.getValidatedGameContext(
+        client,
+        payload.gameId,
+      );
+      partida = contexto.partida;
+      remitenteId = contexto.userId;
+
+      this.gameService.saltarTurnoJugador(partida, remitenteId, payload.adversarioId);
+      
+      this.notificarTodosTurnoJugadorSaltado(partida, remitenteId, payload.adversarioId);
+      this.scheduleBotProcessing(partida);
+  
+      return {
+        success: true,
+      };
+    } catch (error) {
+      if (this.esErrorHabilidadDenegada(error) && partida && remitenteId) {
+        this.notificarTodosHabilidadDenegada(
+          partida,
+          remitenteId,
+          'saltar-turno-jugador',
+        );
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          habilidadDenegada: true,
+        };
+      }
+      this.handleWsError(error);
     }
   }
 
@@ -1310,6 +1771,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           'jugador-menos-puntuacion',
         );
         this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        this.scheduleBotProcessing(partida);
         return {
           success: true,
           gameId: partida.gameId,
@@ -1332,6 +1795,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       );
 
       this.gameService.desactivarProximaHabilidad(partida, userId);
+      this.notificarEstadoPoder8(partida, userId);
       this.scheduleBotProcessing(partida);
 
       return {
@@ -1447,10 +1911,17 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       if(correcto){
         /*se puede notificar al otro jugador para que efectue su parte de la 
         acción*/
-        this.server.to(payload.rivalId).emit('game:intercambio-rival',{
-          gameId: payload.gameId,
-          usuarioIniciador: contexto.userId,
-        });
+        const rival = contexto.room.players.get(payload.rivalId);
+        if (!rival) {
+          throw new Error('El rival seleccionado no pertenece a la sala');
+        }
+
+        if (rival.controlador === 'humano' && rival.socketId) {
+          this.server.to(rival.socketId).emit('game:intercambio-rival', {
+            gameId: payload.gameId,
+            usuarioIniciador: contexto.userId,
+          });
+        }
       } 
       this.scheduleBotProcessing(partida);
 
@@ -1505,6 +1976,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       if (this.esErrorSinCartas(error) && partida) {
         this.finalizarPartidaYSincronizarSala(partida, 'sinCartasMazo');
       }
+      if (error instanceof AccionProtegidaCanceladaError && partida) {
+        this.notificarTodosAccionProtegidaCancelada(partida, error);
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          accionCancelada: true,
+        };
+      }
       this.handleWsError(error);
     }
   }
@@ -1539,6 +2020,67 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       this.handleWsError(error);
     }
   }
+
+  @SubscribeMessage('game:volver-a-jugar')
+  volverAJugar(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: volverAJugarPayload,
+  ) {
+    try {
+      const userId = this.getUserId(client);
+      const session = this.getRematchSessionOrThrow(payload.gameId);
+
+      if (!session.participantIds.has(userId)) {
+        throw new Error('Solo los jugadores humanos de la partida pueden solicitar revancha');
+      }
+
+      session.socketByUserId.set(userId, client.id);
+      session.readyUserIds.add(userId);
+
+      if (!session.launched) {
+        if (!session.readyUserIds.has(session.hostId)) {
+          this.notificarEstadoRevancha(session, 'waiting-host', session.readyUserIds);
+          return {
+            success: true,
+            gameId: session.gameId,
+            estado: 'waiting-host',
+          };
+        }
+
+        this.crearSalaRevancha(session);
+        this.notificarEstadoRevancha(session, 'room-ready', session.readyUserIds);
+
+        return {
+          success: true,
+          gameId: session.gameId,
+          estado: 'room-ready',
+          roomCode: session.rematchRoomCode,
+          roomName: session.roomName,
+        };
+      }
+
+      if (!session.rematchRoomCode) {
+        throw new Error('La sala de revancha aún no está disponible');
+      }
+
+      const roomActual = this.gameService.getRoomByUserId(userId);
+      if (!roomActual || roomActual.code !== session.rematchRoomCode) {
+        this.unirJugadorATrasLaCreacion(session, userId, client.id);
+      }
+
+      this.notificarEstadoRevancha(session, 'room-ready', [userId]);
+
+      return {
+        success: true,
+        gameId: session.gameId,
+        estado: 'room-ready',
+        roomCode: session.rematchRoomCode,
+        roomName: session.roomName,
+      };
+    } catch (error) {
+      this.handleWsError(error);
+    }
+  }
  
 ////////////////////////////////////////////////////////////////////////////////
 //                              HABILIDADES DE CARTAS                         //
@@ -1567,6 +2109,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         cartasReveladas,
       });
 
+      this.finalizarPartidaYSincronizarSala(partida);
       this.scheduleBotProcessing(partida);
 
       return {
@@ -1577,6 +2120,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       if (this.esErrorHabilidadDenegada(error) && partida && userId) {
         this.notificarTodosHabilidadDenegada(partida, userId, 'ver-carta-todos');
         this.finalizarPartidaYSincronizarSala(partida);
+        this.notificarEstadoPoder8(partida, null);
+        this.scheduleBotProcessing(partida);
         return {
           success: true,
           gameId: partida.gameId,
@@ -1614,6 +2159,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
     return {
       partida: validation.game,
+      room: validation.room,
       userId,
     };
   }

@@ -294,7 +294,6 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   private getErrorMessage(error: unknown): string {
-    //pego esto aqui por el iniciar partida que hay 
     if (error instanceof WsException) {
       const wsError = error.getError();
 
