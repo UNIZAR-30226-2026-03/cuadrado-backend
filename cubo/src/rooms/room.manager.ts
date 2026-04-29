@@ -435,6 +435,17 @@ export class RoomManager {
 
   }
 
+  cerrarSalaForzado(roomCode: string): void {
+    const room = this.rooms.get(roomCode);
+    if (!room) return;
+    room.players.forEach((player) => {
+      if (this.userToRoom.get(player.userId) === roomCode) {
+        this.userToRoom.delete(player.userId);
+      }
+    });
+    this.rooms.delete(roomCode);
+  }
+
   resetRoomAfterGame(roomCode: string): Room | null {
     const room = this.getRoomByCode(roomCode);
 
@@ -628,7 +639,7 @@ export class RoomManager {
     idInRoom: number,
     controlador: playerController = 'humano',
   ): Player {
-   
+
     return {
       userId,
       controlador,

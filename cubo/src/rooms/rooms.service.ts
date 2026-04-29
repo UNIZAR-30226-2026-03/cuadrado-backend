@@ -39,6 +39,10 @@ export class RoomsService {
     this.roomManager.clearSavedRoomName(roomCode);
   }
 
+  cerrarSalaForzado(roomCode: string): void {
+    this.roomManager.cerrarSalaForzado(roomCode);
+  }
+
   resetRoomAfterGame(roomCode: string) {
     return this.roomManager.resetRoomAfterGame(roomCode);
   }

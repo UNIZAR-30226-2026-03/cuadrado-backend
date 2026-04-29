@@ -10,6 +10,7 @@ import { RoomsModule } from './rooms/rooms.module';
 import { SkinsModule } from './skins/skins.module';
 import { GameModule } from './game/game.module';
 import { UsersModule } from './users/users.module';
+import { VoiceModule } from './voice/voice.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { UsersModule } from './users/users.module';
     GameModule,
     UsersModule,
     SkinsModule,
+    VoiceModule,
   ],
   controllers: [AppController],
   providers: [AppService],
