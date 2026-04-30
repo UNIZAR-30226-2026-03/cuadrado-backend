@@ -14,6 +14,18 @@ import { Player } from '../rooms/interfaces/player.interface';
 import { Room } from '../rooms/interfaces/room.interface';
 import { RulesConfig } from '../rooms/interfaces/rules-config.interface';
 
+const createCard = (
+  carta: number,
+  palo: Card['palo'] = 'corazones',
+  protegida = false,
+): Card => ({
+  carta,
+  palo,
+  habilidad: 'ninguna',
+  puntos: carta,
+  protegida,
+});
+
 const createGame = (overrides: Partial<Game> = {}): Game => ({
   gameId: 'G1',
   roomId: 'ROOM1',
@@ -25,6 +37,7 @@ const createGame = (overrides: Partial<Game> = {}): Game => ({
     cuboActivado: false,
     cuboSolicitanteId: null,
     cuboTurnosRestantes: undefined,
+    numBarajas: 1,
     cartasVigentes: [],
     cartasDescartadas: [],
     habilidadesActivadas: [],
@@ -177,20 +190,49 @@ describe('GameGateway', () => {
       'game:inicio-partida',
       expect.objectContaining({
         partidaId: 'G1',
+        gameId: 'G1',
+        roomId: 'ROOM1',
+        loadedFromSave: false,
         jugadores: ['u1', 'u2'],
+        estado: expect.objectContaining({
+          turn: 0,
+          turnoActualUserId: 'u1',
+          phase: 'WAIT_DRAW',
+          numBarajas: 1,
+          cartasRestantes: 0,
+          ultimaCartaDescartada: null,
+        }),
       }),
     );
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       success: true,
       gameId: 'G1',
       roomId: 'ROOM1',
       loadedFromSave: false,
-    });
+      estado: expect.objectContaining({
+        turn: 0,
+        turnoActualUserId: 'u1',
+        phase: 'WAIT_DRAW',
+      }),
+    }));
   });
 
   it('inicia partida cargando guardada cuando llega savedRoomName', async () => {
     const room = createRoom({ code: 'ROOM1', hostId: 'u1', started: false });
     const game = createGame({ gameId: 'SAVE01' });
+    const cartaDescarte = createCard(9, 'picas');
+
+    game.estadoGlobal.turn = 1;
+    game.estadoGlobal.numBarajas = 2;
+    game.estadoGlobal.cartasVigentes = [createCard(4), createCard(5)];
+    game.estadoGlobal.cartasDescartadas = [cartaDescarte];
+    game.estadoGlobal.habilidadesActivadas = [3, 8];
+    game.estadoGlobal.jugadores[0].cartasMano = [
+      createCard(1, 'corazones', true),
+      createCard(2),
+    ];
+    game.estadoGlobal.jugadores[0].habilidadesActivadas = [7];
+    game.estadoGlobal.jugadores[1].cartasMano = [createCard(6)];
 
     gameService.validateStartContext.mockReturnValue(createStartContext({ room }));
     gameService.cargarPartidaGuardada.mockResolvedValue(game);
@@ -210,15 +252,55 @@ describe('GameGateway', () => {
       'game:inicio-partida',
       expect.objectContaining({
         partidaId: 'SAVE01',
+        gameId: 'SAVE01',
+        roomId: 'ROOM1',
+        loadedFromSave: true,
         jugadores: ['u1', 'u2'],
+        estado: expect.objectContaining({
+          turn: 1,
+          turnoActualUserId: 'u2',
+          phase: 'WAIT_DRAW',
+          numBarajas: 2,
+          cartasRestantes: 2,
+          cartasDescartadas: [cartaDescarte],
+          ultimaCartaDescartada: cartaDescarte,
+          habilidadesActivadas: [3, 8],
+        }),
       }),
     );
-    expect(result).toEqual({
+    const inicioPayload = emitByTarget.ROOM1.mock.calls.find(
+      ([event]) => event === 'game:inicio-partida',
+    )?.[1];
+
+    expect(inicioPayload.estado.jugadores[0]).toEqual(
+      expect.objectContaining({
+        userId: 'u1',
+        numCartas: 2,
+        cartasProtegidas: [0],
+        habilidadesActivadas: [7],
+      }),
+    );
+    expect(inicioPayload.estado.jugadores[1]).toEqual(
+      expect.objectContaining({
+        userId: 'u2',
+        numCartas: 1,
+        cartasProtegidas: [],
+      }),
+    );
+    expect(inicioPayload.estado).not.toHaveProperty('cartasVigentes');
+    expect(inicioPayload.estado.jugadores[0]).not.toHaveProperty('cartasMano');
+
+    expect(result).toEqual(expect.objectContaining({
       success: true,
       gameId: 'SAVE01',
       roomId: 'ROOM1',
       loadedFromSave: true,
-    });
+      estado: expect.objectContaining({
+        turn: 1,
+        turnoActualUserId: 'u2',
+        cartasRestantes: 2,
+      }),
+    }));
   });
 
   it('permite iniciar partida aunque la sala llegue marcada como iniciada', async () => {
@@ -231,12 +313,12 @@ describe('GameGateway', () => {
 
     const result = await gateway.iniciarPartida(client as Socket, undefined);
 
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       success: true,
       gameId: 'G1',
       roomId: 'ROOM1',
       loadedFromSave: false,
-    });
+    }));
   });
 
   it('guardar-y-cerrar emite room:closed y expulsa sockets de la sala', async () => {

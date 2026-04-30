@@ -100,11 +100,40 @@ interface iniciarPartidaPayload {
   savedRoomName?: string;
 }
 
+interface EstadoJugadorInicioPartida {
+  userId: string;
+  controlador: 'humano' | 'bot';
+  dificultadBot?: dificultadBot;
+  nombreEnPartida?: string;
+  numCartas: number;
+  cartasProtegidas: number[];
+  habilidadesActivadas: number[];
+  saltarTurno: boolean;
+  tieneCartaPendiente: boolean;
+}
+
+interface EstadoPublicoInicioPartida {
+  turn: number;
+  turnoActualUserId: string;
+  phase: Game['estadoGlobal']['phase'];
+  turnDeadlineAt: number;
+  numBarajas: number;
+  cartasRestantes: number;
+  cartasDescartadas: Card[];
+  ultimaCartaDescartada: Card | null;
+  habilidadesActivadas: number[];
+  cuboActivado: boolean;
+  cuboSolicitanteId: string | null;
+  cuboTurnosRestantes?: number;
+  jugadores: EstadoJugadorInicioPartida[];
+}
+
 interface iniciarPartidaResponse {
   success: true;
   gameId: string;
   roomId: string;
   loadedFromSave: boolean;
+  estado: EstadoPublicoInicioPartida;
 }
 
 interface guardarYCerrarPayload {
@@ -721,12 +750,55 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     });
   }
 
-  private notificarTodosComienzoPartida(partida: Game){
+  private serializarEstadoPublicoPartida(partida: Game): EstadoPublicoInicioPartida {
+    const ultimaCartaDescartada =
+      partida.estadoGlobal.cartasDescartadas[
+        partida.estadoGlobal.cartasDescartadas.length - 1
+      ] ?? null;
+
+    return {
+      turn: partida.estadoGlobal.turn,
+      turnoActualUserId:
+        partida.estadoGlobal.turnoJugadores[partida.estadoGlobal.turn],
+      phase: partida.estadoGlobal.phase,
+      turnDeadlineAt: partida.estadoGlobal.turnDeadlineAt,
+      numBarajas: partida.estadoGlobal.numBarajas,
+      cartasRestantes: partida.estadoGlobal.cartasVigentes.length,
+      cartasDescartadas: [...partida.estadoGlobal.cartasDescartadas],
+      ultimaCartaDescartada,
+      habilidadesActivadas: [...partida.estadoGlobal.habilidadesActivadas],
+      cuboActivado: partida.estadoGlobal.cuboActivado,
+      cuboSolicitanteId: partida.estadoGlobal.cuboSolicitanteId,
+      cuboTurnosRestantes: partida.estadoGlobal.cuboTurnosRestantes,
+      jugadores: partida.estadoGlobal.turnoJugadores.map((userId, index) => {
+        const jugador = partida.estadoGlobal.jugadores[index];
+        return {
+          userId,
+          controlador: jugador.controlador,
+          dificultadBot: jugador.dificultadBot,
+          nombreEnPartida: jugador.nombreEnPartida,
+          numCartas: jugador.cartasMano.length,
+          cartasProtegidas: jugador.cartasMano
+            .map((carta, cartaIndex) => (carta.protegida ? cartaIndex : null))
+            .filter((cartaIndex): cartaIndex is number => cartaIndex !== null),
+          habilidadesActivadas: [...jugador.habilidadesActivadas],
+          saltarTurno: Boolean(jugador.saltarTurno),
+          tieneCartaPendiente: Boolean(jugador.cartaPendiente),
+        };
+      }),
+    };
+  }
+
+  private notificarTodosComienzoPartida(partida: Game, loadedFromSave: boolean){
 
     this.server.to(partida.roomId).emit('game:inicio-partida',{
       partidaId : partida.gameId,
+      gameId: partida.gameId,
+      roomId: partida.roomId,
+      loadedFromSave,
       jugadores: partida.estadoGlobal.turnoJugadores,
       jugadoresDetalle: this.serializarJugadoresPartida(partida),
+      estado: this.serializarEstadoPublicoPartida(partida),
     });
   }
 
@@ -1163,14 +1235,17 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           )
         : this.gameService.inicioPartida(room);
 
-      this.notificarTodosComienzoPartida(partida);
+      const loadedFromSave = Boolean(payload?.savedRoomName);
+
+      this.notificarTodosComienzoPartida(partida, loadedFromSave);
       this.scheduleBotProcessing(partida);
 
       return{
         success: true,
         gameId: partida.gameId,
         roomId: partida.roomId,
-        loadedFromSave: Boolean(payload?.savedRoomName),
+        loadedFromSave,
+        estado: this.serializarEstadoPublicoPartida(partida),
       }
     } catch (error) {
       this.handleWsError(error);
