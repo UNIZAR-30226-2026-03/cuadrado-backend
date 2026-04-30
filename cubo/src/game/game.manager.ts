@@ -189,8 +189,12 @@ export class GameManager {
   // control de los requerimientos de habilidades pendientes por partida
   private readonly permisosHabilidad = new Map<string, PermisoHabilidad>();
 
-  private countHabilidadesSinEfecto = new Map<string, number>();
-  private countHabilidadesSinEfectoDiferidas = new Map<string, number>();
+  //private countHabilidadesSinEfecto = new Map<string, number>();
+  //private countHabilidadesSinEfectoDiferidas = new Map<string, number>();
+
+  // En game.manager.ts
+  private countHabilidadesSinEfecto = new Map<string, string[]>();
+  private countHabilidadesSinEfectoDiferidas = new Map<string, string[]>();
 
   getGameById(gameId: string): Game {
     const partida = this.games.get(gameId);
@@ -264,20 +268,31 @@ export class GameManager {
     return userId;
   }
 
-  private verificarHabilidadSinEfecto(gameId: string): boolean {
-    let habilidadesSinEfecto = this.countHabilidadesSinEfecto.get(gameId);
+  private verificarHabilidadSinEfecto(gameId: string, jugadorId: string): boolean {
+    let habilidadesSinEfecto = this.countHabilidadesSinEfecto.get(gameId) ?? [];
 
-    if (habilidadesSinEfecto != null && habilidadesSinEfecto > 0) {
-      habilidadesSinEfecto -= 1;
+    const index = habilidadesSinEfecto.findIndex((id) => id === jugadorId);
+
+    //if (habilidadesSinEfecto != null && habilidadesSinEfecto > 0) {
+    //  habilidadesSinEfecto -= 1;
+    //  this.countHabilidadesSinEfecto.set(gameId, habilidadesSinEfecto);
+    //  return true;
+    //} else {
+    //  return false;
+    //}
+    if (index !== -1) {
+      // Si la encontramos, la gastamos/eliminamos
+      habilidadesSinEfecto.splice(index, 1);
       this.countHabilidadesSinEfecto.set(gameId, habilidadesSinEfecto);
-      return true;
+      return true; // Se anula
     } else {
-      return false;
+      return false; // NO se anula
     }
+
   }
 
-  private cancelarHabilidadInmediataSiCorresponde(partida: Game) {
-    if (!this.verificarHabilidadSinEfecto(partida.gameId)) {
+  private cancelarHabilidadInmediataSiCorresponde(partida: Game, jugadorId: string) {
+    if (!this.verificarHabilidadSinEfecto(partida.gameId, jugadorId)) {
       return;
     }
 
@@ -286,8 +301,8 @@ export class GameManager {
     throw new Error(HABILIDAD_DENEGADA_SIN_EFECTO_ERROR_MESSAGE);
   }
 
-  private cancelarHabilidadAlmacenadaSiCorresponde(partida: Game) {
-    if (!this.verificarHabilidadSinEfecto(partida.gameId)) {
+  private cancelarHabilidadAlmacenadaSiCorresponde(partida: Game, jugadorId: string) {
+    if (!this.verificarHabilidadSinEfecto(partida.gameId, jugadorId)) {
       return;
     }
 
@@ -334,14 +349,14 @@ export class GameManager {
   }
 
   private activarHabilidadesSinEfectoDiferidas(gameId: string): void {
-    const diferidas = this.countHabilidadesSinEfectoDiferidas.get(gameId) ?? 0;
-    if (diferidas <= 0) {
+    const diferidas = this.countHabilidadesSinEfectoDiferidas.get(gameId) ?? [];
+    if (diferidas.length <= 0) {
       return;
     }
 
-    const activas = this.countHabilidadesSinEfecto.get(gameId) ?? 0;
-    this.countHabilidadesSinEfecto.set(gameId, activas + diferidas);
-    this.countHabilidadesSinEfectoDiferidas.set(gameId, 0);
+    const activas = this.countHabilidadesSinEfecto.get(gameId) ?? [];
+    this.countHabilidadesSinEfecto.set(gameId, [...activas, ...diferidas]);
+    this.countHabilidadesSinEfectoDiferidas.set(gameId, []);
   }
 
   private actualizarCuboTrasAvanceTurno(partida: Game) {
@@ -764,16 +779,16 @@ export class GameManager {
     }
 
     const habilidadesSinEfecto =
-      this.countHabilidadesSinEfecto.get(partida.gameId) ?? 0;
-    if (habilidadesSinEfecto > 0) {
+      this.countHabilidadesSinEfecto.get(partida.gameId) ?? [];
+    if (habilidadesSinEfecto.length > 0) {
       throw new Error(
         `${GUARDADO_INVALIDO_ERROR_MESSAGE}: hay efectos de habilidad pendientes`,
       );
     }
 
     const habilidadesSinEfectoDiferidas =
-      this.countHabilidadesSinEfectoDiferidas.get(partida.gameId) ?? 0;
-    if (habilidadesSinEfectoDiferidas > 0) {
+      this.countHabilidadesSinEfectoDiferidas.get(partida.gameId) ?? [];
+    if (habilidadesSinEfectoDiferidas.length > 0) {
       throw new Error(
         `${GUARDADO_INVALIDO_ERROR_MESSAGE}: hay efectos de habilidad programados para el siguiente turno`,
       );
@@ -919,8 +934,8 @@ export class GameManager {
     this.reaccionCarta.set(partida.gameId, true);
     this.reaccionUserId.delete(partida.gameId);
     this.permisosHabilidad.delete(partida.gameId);
-    this.countHabilidadesSinEfecto.set(partida.gameId, 0);
-    this.countHabilidadesSinEfectoDiferidas.set(partida.gameId, 0);
+    this.countHabilidadesSinEfecto.set(partida.gameId, []);
+    this.countHabilidadesSinEfectoDiferidas.set(partida.gameId, []);
 
     return partida;
   }
@@ -1213,7 +1228,7 @@ export class GameManager {
     this.abrirVentanaReaccionGlobal(partida);
     this.games.set(gameCode, partida);
     this.roomToGame.set(codigoSala, gameCode);
-    this.countHabilidadesSinEfecto.set(gameCode, 0);
+    this.countHabilidadesSinEfecto.set(gameCode, []);
     return partida;
   }
 
@@ -1414,7 +1429,7 @@ export class GameManager {
       throw new Error('La habilidad pendiente no permite esta accion');
     }
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, remitenteId);
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
     const idEnPartidaD = this.obtenerIndiceJugador(partida, destinatarioId);
@@ -1473,7 +1488,7 @@ export class GameManager {
       'ver-carta-propia-y-rival',
     ]);
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, solicitanteId);
 
     const quiereVerRival = rivalId != null || indexCartaRival != null;
 
@@ -1601,7 +1616,7 @@ export class GameManager {
 
     this.obtenerPermisoHabilidadActiva(partida, solicitanteId, ['ver-carta-todos']);
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, solicitanteId);
 
     const indicePropioJugador = this.obtenerIndiceJugador(partida, solicitanteId);
     const cartasReveladas: CartaReveladaTodos[] = [];
@@ -1639,7 +1654,7 @@ export class GameManager {
 
     this.obtenerPermisoHabilidadActiva(partida, remitenteId, ['intercambiar-todas']);
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, remitenteId);
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
     const idEnPartidaD = this.obtenerIndiceJugador(partida, destinatarioId);
@@ -1919,7 +1934,7 @@ export class GameManager {
       );
     }
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, userId);
 
     const idEnPartida = this.obtenerIndiceJugador(partida, adversarioId);
     const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
@@ -1960,7 +1975,7 @@ export class GameManager {
       throw new Error('El permiso activo no corresponde a proteger una carta');
     }
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, userId);
 
     const carta = this.obtenerCartaDeJugador(partida, userId, numCarta);
     carta.protegida = true;
@@ -1982,7 +1997,7 @@ export class GameManager {
 
     this.obtenerPermisoHabilidadActiva(partida, userId, ['saltar-turno-jugador']);
 
-    this.cancelarHabilidadInmediataSiCorresponde(partida);
+    this.cancelarHabilidadInmediataSiCorresponde(partida, userId);
 
     const idEnPartidaAdversario = this.obtenerIndiceJugador(
       partida,
@@ -2017,7 +2032,7 @@ export class GameManager {
 
     habilidades.splice(index, 1);
 
-    this.cancelarHabilidadAlmacenadaSiCorresponde(partida);
+    this.cancelarHabilidadAlmacenadaSiCorresponde(partida, userId);
 
     let jugadorMinPuntuacion = this.obtenerUserIdPorIndice(partida, 0);
     let aux = this.calcularPuntosJugador(partida, jugadorMinPuntuacion);
@@ -2056,10 +2071,20 @@ export class GameManager {
 
     habilidades.splice(index, 1);
 
-    let numHabilidadesSinEfectoDiferidas =
-      this.countHabilidadesSinEfectoDiferidas.get(partida.gameId) ?? 0;
+    //let numHabilidadesSinEfectoDiferidas =
+    //  this.countHabilidadesSinEfectoDiferidas.get(partida.gameId) ?? 0;
 
-    numHabilidadesSinEfectoDiferidas += 1;
+    //numHabilidadesSinEfectoDiferidas += 1;
+
+    let numHabilidadesSinEfectoDiferidas =
+      this.countHabilidadesSinEfectoDiferidas.get(partida.gameId) ?? [];
+
+    // Añadir a TODOS EXCEPTO el que usó el poder 8
+    for (const otroUserId of partida.estadoGlobal.turnoJugadores) {
+      if (otroUserId !== userId) {
+        numHabilidadesSinEfectoDiferidas.push(otroUserId);
+      }
+    }
 
     this.countHabilidadesSinEfectoDiferidas.set(
       partida.gameId,
@@ -2070,12 +2095,12 @@ export class GameManager {
     return true;
   }
 
-  getHabilidadesSinEfectoRestantes(gameId: string): number {
-    return this.countHabilidadesSinEfecto.get(gameId) ?? 0;
+  getHabilidadesSinEfectoRestantes(gameId: string): string[] {
+    return this.countHabilidadesSinEfecto.get(gameId) ?? [];
   }
 
-  getHabilidadesSinEfectoDiferidasRestantes(gameId: string): number {
-    return this.countHabilidadesSinEfectoDiferidas.get(gameId) ?? 0;
+  getHabilidadesSinEfectoDiferidasRestantes(gameId: string): string[] {
+    return this.countHabilidadesSinEfectoDiferidas.get(gameId) ?? [];
   }
 
   prepararIntercambioCarta(

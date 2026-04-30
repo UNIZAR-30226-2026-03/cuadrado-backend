@@ -547,11 +547,11 @@ export class GameService {
     return this.gameManager.desactivarProximaHabilidad(partida, userId);
   }
 
-  getHabilidadesSinEfectoRestantes(gameId: string): number {
+  getHabilidadesSinEfectoRestantes(gameId: string): string[] {
     return this.gameManager.getHabilidadesSinEfectoRestantes(gameId);
   }
 
-  getHabilidadesSinEfectoDiferidasRestantes(gameId: string): number {
+  getHabilidadesSinEfectoDiferidasRestantes(gameId: string): string[] {
     return this.gameManager.getHabilidadesSinEfectoDiferidasRestantes(gameId);
   }
 
