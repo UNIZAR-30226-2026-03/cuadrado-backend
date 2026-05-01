@@ -867,8 +867,8 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
     this.server.to(partida.roomId).emit('game:poder8-estado', {
       gameId: partida.gameId,
-      pendientes: pendientes.length,
-      pendientesDiferidos: pendientesDiferidos.length,
+      pendientes,
+      pendientesDiferidos,
       activadorId,
     });
   }
