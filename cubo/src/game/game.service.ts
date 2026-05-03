@@ -629,7 +629,7 @@ export class GameService {
   }
 
   async aplicarRecompensas(
-    recompensas: Array<{ userId: string; eloChange: number; cubitosChange: number }>,
+    recompensas: Array<{ userId: string; posicion: number; eloChange: number; cubitosChange: number }>,
   ): Promise<void> {
     for (const recompensa of recompensas) {
       await this.prisma.user.update({
@@ -641,6 +641,10 @@ export class GameService {
           cubitos: {
             increment: recompensa.cubitosChange,
           },
+          gamesPlayed: {
+            increment: 1,
+          },
+          gamesWon: recompensa.posicion === 1 ? { increment: 1 } : undefined,
         },
       });
     }
