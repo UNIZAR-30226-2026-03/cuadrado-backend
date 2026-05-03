@@ -157,8 +157,10 @@ interface intercambiarCartaInteractivo {
   rivalId: string,
 }
 
-interface verCartaTodosPayload {
+interface verCartaRivalPayload {
   gameId: string;
+  rivalId: string;
+  indexCartaRival: number;
 }
 
 interface resolverJPayload {
@@ -379,8 +381,13 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           );
         case 'ver-carta':
           return this.ejecutarVerCartaBot(partida, botId, accion.cartaIndex);
-        case 'ver-carta-todos':
-          return this.ejecutarVerCartaTodosBot(partida, botId);
+        case 'ver-carta-rival':
+          return this.ejecutarVerCartaRivalBot(
+            partida,
+            botId,
+            accion.targetUserId,
+            accion.cartaIndexTarget,
+          );
         case 'ver-carta-propia-y-rival':
           return this.ejecutarVerCartaPropiaYRivalBot(
             partida,
@@ -537,8 +544,16 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
     return true;
   }
 
-  private ejecutarVerCartaTodosBot(partida: Game, botId: string): boolean {
-    this.gameService.verCartaTodos(partida, botId);
+  private ejecutarVerCartaRivalBot(
+    partida: Game,
+    botId: string,
+    rivalId?: string,
+    cartaIndexRival?: number,
+  ): boolean {
+    if (rivalId == null || cartaIndexRival == null) {
+      return false;
+    }
+    this.gameService.verCartaRival(partida, botId, rivalId, cartaIndexRival);
     this.finalizarPartidaYSincronizarSala(partida);
     return true;
   }
@@ -2161,11 +2176,11 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 //                              HABILIDADES DE CARTAS                         //
 ////////////////////////////////////////////////////////////////////////////////
 
-  /** Poder del 5: el jugador activo ve una carta aleatoria de cada rival. */
-  @SubscribeMessage('game:ver-carta-todos')
-  verCartaTodos(
+  /** Poder del 5: el jugador activo elige UN rival y UNA de sus cartas para revelar. */
+  @SubscribeMessage('game:ver-carta-rival')
+  verCartaRival(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: verCartaTodosPayload,
+    @MessageBody() payload: verCartaRivalPayload,
   ) {
     let partida: Game | undefined;
     let userId: string | undefined;
@@ -2175,13 +2190,19 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       partida = contexto.partida;
       userId = contexto.userId;
 
-      const cartasReveladas: CartaReveladaTodos[] =
-        this.gameService.verCartaTodos(partida, userId);
+      const cartaRevelada: CartaReveladaTodos =
+        this.gameService.verCartaRival(
+          partida,
+          userId,
+          payload.rivalId,
+          payload.indexCartaRival,
+        );
 
-      // Solo el solicitante recibe las cartas reveladas
+      // Solo el solicitante recibe la carta revelada. Reusamos el evento
+      // existente con un array de un único elemento para no romper el cliente.
       this.server.to(client.id).emit('game:cartas-reveladas-todos', {
         gameId: payload.gameId,
-        cartasReveladas,
+        cartasReveladas: [cartaRevelada],
       });
 
       this.finalizarPartidaYSincronizarSala(partida);
@@ -2193,7 +2214,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       };
     } catch (error) {
       if (this.esErrorHabilidadDenegada(error) && partida && userId) {
-        this.notificarTodosHabilidadDenegada(partida, userId, 'ver-carta-todos');
+        this.notificarTodosHabilidadDenegada(partida, userId, 'ver-carta-rival');
         this.finalizarPartidaYSincronizarSala(partida);
         this.notificarEstadoPoder8(partida, null);
         this.scheduleBotProcessing(partida);
@@ -2201,6 +2222,18 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           success: true,
           gameId: partida.gameId,
           habilidadDenegada: true,
+        };
+      }
+      if (this.esErrorCartaProtegidaBloquea(error) && partida) {
+        if (error instanceof AccionProtegidaCanceladaError) {
+          this.notificarTodosAccionProtegidaCancelada(partida, error);
+        }
+        this.finalizarPartidaYSincronizarSala(partida);
+        this.scheduleBotProcessing(partida);
+        return {
+          success: true,
+          gameId: partida.gameId,
+          habilidadCancelada: true,
         };
       }
       this.handleWsError(error);

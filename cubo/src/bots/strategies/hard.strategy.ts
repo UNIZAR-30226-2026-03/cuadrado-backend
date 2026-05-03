@@ -395,8 +395,22 @@ export class HardBotStrategy extends BotManager {
         };
       }
 
-      case 'ver-carta-todos':
-        return { accion: 'ver-carta-todos' };
+      case 'ver-carta-rival': {
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) return { accion: 'esperar' };
+        const cartasRival =
+          partida.estadoGlobal.jugadores[rivalNum].cartasMano;
+        const candidatos = cartasRival
+          .map((carta, idx) => ({ carta, idx }))
+          .filter(({ carta }) => !carta.protegida);
+        if (candidatos.length === 0) return { accion: 'esperar' };
+        const elegido = candidatos[Math.floor(Math.random() * candidatos.length)];
+        return {
+          accion: 'ver-carta-rival',
+          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+          cartaIndexTarget: elegido.idx,
+        };
+      }
 
       case 'decidir-intercambio-j':
         return { accion: 'resolver-j', intercambiar: true };

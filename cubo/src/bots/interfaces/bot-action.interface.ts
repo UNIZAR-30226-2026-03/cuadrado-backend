@@ -3,7 +3,7 @@ export type BotActionType =
   | 'descartar-pendiente'
   | 'carta-por-pendiente'
   | 'ver-carta'
-  | 'ver-carta-todos'
+  | 'ver-carta-rival'
   | 'ver-carta-propia-y-rival'
   | 'intercambiar-carta'
   | 'intercambiar-carta-interactivo'

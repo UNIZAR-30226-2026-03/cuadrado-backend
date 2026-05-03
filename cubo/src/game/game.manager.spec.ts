@@ -258,9 +258,9 @@ describe('GameManager', () => {
     expect(game.estadoGlobal.jugadores[1].cartasMano[0].protegida).toBe(false);
   });
 
-  it('intercambiar todas cancela y consume todas las protecciones del rival', () => {
+  it('intercambiar todas: las posiciones con alguna carta protegida no se intercambian', () => {
     const cartasU1 = [makeCard(1, 'corazones'), makeCard(2, 'corazones')];
-    const cartasU2 = [makeCard(3, 'picas', true), makeCard(4, 'picas', true)];
+    const cartasU2 = [makeCard(3, 'picas', true), makeCard(4, 'picas')];
     game.estadoGlobal.jugadores[0].cartasMano = cartasU1;
     game.estadoGlobal.jugadores[1].cartasMano = cartasU2;
     game.estadoGlobal.phase = 'WAIT_SKILL';
@@ -270,17 +270,20 @@ describe('GameManager', () => {
       turno: game.estadoGlobal.turn,
     });
 
-    expect(() => manager.intercambiarTodasCartas(game, 'u1', 'u2')).toThrow(
-      AccionProtegidaCanceladaError,
-    );
-    expect(game.estadoGlobal.jugadores[0].cartasMano).toBe(cartasU1);
-    expect(game.estadoGlobal.jugadores[1].cartasMano).toBe(cartasU2);
-    expect(cartasU2.every((carta) => carta.protegida === false)).toBe(true);
+    manager.intercambiarTodasCartas(game, 'u1', 'u2');
+
+    // Posición 0: u2 tiene carta protegida → ambas se quedan en su sitio.
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0].carta).toBe(1);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0].carta).toBe(3);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0].protegida).toBe(true);
+    // Posición 1: ninguna protegida → se intercambian.
+    expect(game.estadoGlobal.jugadores[0].cartasMano[1].carta).toBe(4);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[1].carta).toBe(2);
     expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
     expect(game.estadoGlobal.turn).toBe(1);
   });
 
-  it('intercambiar todas mantiene las protecciones del remitente si el rival no bloquea', () => {
+  it('intercambiar todas: la carta protegida del remitente se queda con su dueño', () => {
     const cartaProtegida = makeCard(1, 'corazones', true);
     const cartaNormal = makeCard(2, 'corazones', false);
     const cartaRivalA = makeCard(3, 'picas', false);
@@ -296,33 +299,76 @@ describe('GameManager', () => {
 
     manager.intercambiarTodasCartas(game, 'u1', 'u2');
 
-    expect(game.estadoGlobal.jugadores[0].cartasMano).toEqual([
-      cartaRivalA,
-      cartaRivalB,
-    ]);
+    // Posición 0: u1 tiene carta protegida → ambas posiciones inalteradas.
+    expect(game.estadoGlobal.jugadores[0].cartasMano[0]).toBe(cartaProtegida);
     expect(game.estadoGlobal.jugadores[0].cartasMano[0].protegida).toBe(true);
-    expect(game.estadoGlobal.jugadores[0].cartasMano[1].protegida).toBe(false);
-    expect(game.estadoGlobal.jugadores[1].cartasMano[0]).toBe(cartaProtegida);
-    expect(game.estadoGlobal.jugadores[1].cartasMano[0].protegida).toBe(false);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[0]).toBe(cartaRivalA);
+    // Posición 1: ninguna protegida → se intercambian.
+    expect(game.estadoGlobal.jugadores[0].cartasMano[1]).toBe(cartaRivalB);
+    expect(game.estadoGlobal.jugadores[1].cartasMano[1]).toBe(cartaNormal);
   });
 
-  it('ver carta todos ignora jugadores con todas sus cartas protegidas', () => {
-    game.estadoGlobal.jugadores[0].cartasMano = [makeCard(1)];
-    game.estadoGlobal.jugadores[1].cartasMano = [
-      makeCard(2, 'picas', true),
-      makeCard(3, 'picas', true),
-    ];
+  it('protegerCarta rechaza si la carta ya está protegida y conserva el permiso para reintentar', () => {
+    const cartaProtegida = makeCard(1, 'corazones', true);
+    const cartaNormal = makeCard(2, 'corazones', false);
+    game.estadoGlobal.jugadores[0].cartasMano = [cartaProtegida, cartaNormal];
     game.estadoGlobal.phase = 'WAIT_SKILL';
     (manager as any).permisosHabilidad.set(game.gameId, {
       jugadorId: 'u1',
-      tipo: 'ver-carta-todos',
+      tipo: 'proteger-carta',
       turno: game.estadoGlobal.turn,
     });
 
-    const reveladas = manager.verCartaTodos(game, 'u1');
+    expect(() => manager.protegerCarta(game, 'u1', 0)).toThrow(
+      'Esta carta ya está protegida, escoge otra',
+    );
+    // Permiso intacto: el jugador puede reintentar con otra carta.
+    expect(game.estadoGlobal.phase).toBe('WAIT_SKILL');
+    expect((manager as any).permisosHabilidad.has(game.gameId)).toBe(true);
 
-    expect(reveladas).toEqual([]);
-    expect(game.estadoGlobal.jugadores[1].cartasMano.every((carta) => carta.protegida)).toBe(true);
+    manager.protegerCarta(game, 'u1', 1);
+    expect(cartaNormal.protegida).toBe(true);
+    expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
+  });
+
+  it('verCartaRival revela la carta elegida del rival y avanza turno', () => {
+    const cartaObjetivo = makeCard(7, 'rombos');
+    game.estadoGlobal.jugadores[0].cartasMano = [makeCard(1)];
+    game.estadoGlobal.jugadores[1].cartasMano = [makeCard(2, 'picas'), cartaObjetivo];
+    game.estadoGlobal.phase = 'WAIT_SKILL';
+    (manager as any).permisosHabilidad.set(game.gameId, {
+      jugadorId: 'u1',
+      tipo: 'ver-carta-rival',
+      turno: game.estadoGlobal.turn,
+    });
+
+    const revelada = manager.verCartaRival(game, 'u1', 'u2', 1);
+
+    expect(revelada.jugadorId).toBe('u2');
+    expect(revelada.indexCarta).toBe(1);
+    expect(revelada.carta).toBe(cartaObjetivo);
+    expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
+    expect(game.estadoGlobal.turn).toBe(1);
+  });
+
+  it('verCartaRival cancela la acción si la carta elegida está protegida', () => {
+    const cartaProtegida = makeCard(7, 'rombos', true);
+    game.estadoGlobal.jugadores[0].cartasMano = [makeCard(1)];
+    game.estadoGlobal.jugadores[1].cartasMano = [makeCard(2, 'picas'), cartaProtegida];
+    game.estadoGlobal.phase = 'WAIT_SKILL';
+    (manager as any).permisosHabilidad.set(game.gameId, {
+      jugadorId: 'u1',
+      tipo: 'ver-carta-rival',
+      turno: game.estadoGlobal.turn,
+    });
+
+    expect(() => manager.verCartaRival(game, 'u1', 'u2', 1)).toThrow(
+      AccionProtegidaCanceladaError,
+    );
+    // La protección se consume y el turno avanza.
+    expect(cartaProtegida.protegida).toBe(false);
+    expect(game.estadoGlobal.phase).toBe('WAIT_DRAW');
+    expect(game.estadoGlobal.turn).toBe(1);
   });
 
   it('reacción carta-sobre-otra bloquea por primer solicitante', () => {

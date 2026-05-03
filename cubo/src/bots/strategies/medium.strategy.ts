@@ -174,8 +174,19 @@ export class MediumBotStrategy extends BotManager {
         };
       }
 
-      case 'ver-carta-todos':
-        return { accion: 'ver-carta-todos' };
+      case 'ver-carta-rival': {
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) return { accion: 'esperar' };
+        const numCartasRival =
+          partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
+        if (numCartasRival === 0) return { accion: 'esperar' };
+        return {
+          accion: 'ver-carta-rival',
+          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+          cartaIndexTarget: Math.floor(Math.random() * numCartasRival),
+        };
+      }
 
       case 'decidir-intercambio-j':
         return { accion: 'resolver-j', intercambiar: true };

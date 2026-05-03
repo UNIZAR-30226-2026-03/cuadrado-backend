@@ -48,7 +48,7 @@ type ResultadoDescartarPendiente = {
 export type TipoPermisoHabilidad =
   | 'ver-carta-propia'
   | 'ver-carta-propia-y-rival'
-  | 'ver-carta-todos'
+  | 'ver-carta-rival'
   | 'intercambiar-carta'
   | 'intercambiar-todas'
   | 'hacer-robar-carta'
@@ -60,7 +60,7 @@ export type TipoPermisoHabilidad =
 export type PermisoHabilidad =
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia' })
   | (PermisoHabilidadBase & { tipo: 'ver-carta-propia-y-rival' })
-  | (PermisoHabilidadBase & { tipo: 'ver-carta-todos' })
+  | (PermisoHabilidadBase & { tipo: 'ver-carta-rival' })
   | (PermisoHabilidadBase & {
       tipo: 'intercambiar-carta';
       estado?: 'esperando-iniciador' | 'esperando-rival';
@@ -502,7 +502,7 @@ export class GameManager {
     if (cartaDescartada.carta === 5) {
       this.registrarPermisoHabilidad(partida, {
         jugadorId,
-        tipo: 'ver-carta-todos',
+        tipo: 'ver-carta-rival',
         turno: partida.estadoGlobal.turn,
       });
       return { tipo: 'requiere-skill', requiereResolverHabilidad: true };
@@ -1159,6 +1159,22 @@ export class GameManager {
     estadoJugadorB.cartasMano = cartasA;
   }
 
+  private intercambiarManosNoProtegidas(
+    estadoJugadorA: PlayerState,
+    estadoJugadorB: PlayerState,
+  ) {
+    const cartasA = estadoJugadorA.cartasMano;
+    const cartasB = estadoJugadorB.cartasMano;
+    const len = Math.min(cartasA.length, cartasB.length);
+
+    for (let i = 0; i < len; i++) {
+      if (cartasA[i].protegida || cartasB[i].protegida) continue;
+      const tmp = cartasA[i];
+      cartasA[i] = cartasB[i];
+      cartasB[i] = tmp;
+    }
+  }
+
   inicioPartida(
     codigoSala: string,
     jugadoresIniciales: EstadoInicialJugador[],
@@ -1595,39 +1611,48 @@ export class GameManager {
     return { rivalId, indexCartaPropia, indexCartaRival };
   }
 
-  /** Poder del 5: revela una carta aleatoria (no protegida) de cada rival. */
-  verCartaTodos(partida: Game, solicitanteId: string): CartaReveladaTodos[] {
+  /** Poder del 5: el solicitante elige un rival y una de sus cartas concreta.
+   *  Si la carta elegida está protegida, la acción se cancela y se consume
+   *  la protección, igual que el resto de habilidades dirigidas. */
+  verCartaRival(
+    partida: Game,
+    solicitanteId: string,
+    rivalId: string,
+    indexCartaRival: number,
+  ): CartaReveladaTodos {
     this.validarAccionTurno(partida, solicitanteId, 'RESOLVE_SKILL');
 
-    this.obtenerPermisoHabilidadActiva(partida, solicitanteId, ['ver-carta-todos']);
+    this.obtenerPermisoHabilidadActiva(partida, solicitanteId, ['ver-carta-rival']);
+
+    if (rivalId === solicitanteId) {
+      throw new Error('La carta 5 requiere indicar un rival');
+    }
+
+    const cartaRival = this.obtenerCartaDeJugador(
+      partida,
+      rivalId,
+      indexCartaRival,
+    );
 
     this.cancelarHabilidadInmediataSiCorresponde(partida);
 
-    const indicePropioJugador = this.obtenerIndiceJugador(partida, solicitanteId);
-    const cartasReveladas: CartaReveladaTodos[] = [];
-
-    for (let i = 0; i < partida.estadoGlobal.jugadores.length; i++) {
-      if (i === indicePropioJugador) continue;
-
-      const jugadorRival = partida.estadoGlobal.jugadores[i];
-      const candidatos = jugadorRival.cartasMano
-        .map((carta, idx) => ({ carta, idx }))
-        .filter(({ carta }) => !carta.protegida);
-
-      if (candidatos.length === 0) continue;
-
-      const elegido = candidatos[Math.floor(Math.random() * candidatos.length)];
-      cartasReveladas.push({
-        jugadorId: partida.estadoGlobal.turnoJugadores[i],
-        indexCarta: elegido.idx,
-        carta: elegido.carta,
-      });
-    }
+    this.consumirProteccionSiCartaAjena(
+      partida,
+      solicitanteId,
+      rivalId,
+      indexCartaRival,
+      'visualizar',
+      true,
+    );
 
     this.limpiarPermisoHabilidad(partida.gameId);
     this.avanzarTurno(partida);
 
-    return cartasReveladas;
+    return {
+      jugadorId: rivalId,
+      indexCarta: indexCartaRival,
+      carta: cartaRival,
+    };
   }
 
   intercambiarTodasCartas(
@@ -1643,15 +1668,11 @@ export class GameManager {
 
     const idEnPartidaR = this.obtenerIndiceJugador(partida, remitenteId);
     const idEnPartidaD = this.obtenerIndiceJugador(partida, destinatarioId);
-    this.consumirProteccionesDeManoAjena(
-      partida,
-      remitenteId,
-      destinatarioId,
-      'intercambiar',
-      true,
-    );
 
-    this.intercambiarManosManteniendoProtecciones(
+    // Intercambio parcial: las cartas protegidas (de cualquiera de los dos
+    // jugadores) permanecen en su sitio; el resto se intercambia posición a
+    // posición. Las protecciones se conservan en sus cartas originales.
+    this.intercambiarManosNoProtegidas(
       partida.estadoGlobal.jugadores[idEnPartidaR],
       partida.estadoGlobal.jugadores[idEnPartidaD],
     );
@@ -1960,9 +1981,15 @@ export class GameManager {
       throw new Error('El permiso activo no corresponde a proteger una carta');
     }
 
+    // Validamos antes de consumir el escudo del rival (cancelarHabilidadInmediata)
+    // y antes de limpiar el permiso, para que el jugador pueda reintentar con otra carta.
+    const carta = this.obtenerCartaDeJugador(partida, userId, numCarta);
+    if (carta.protegida) {
+      throw new Error('Esta carta ya está protegida, escoge otra');
+    }
+
     this.cancelarHabilidadInmediataSiCorresponde(partida);
 
-    const carta = this.obtenerCartaDeJugador(partida, userId, numCarta);
     carta.protegida = true;
     partida.updatedAt = new Date();
 

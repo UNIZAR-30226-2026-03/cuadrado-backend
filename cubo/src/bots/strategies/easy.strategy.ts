@@ -90,8 +90,18 @@ export class EasyBotStrategy extends BotManager {
       partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
 
     switch (permiso.tipo) {
-      case 'ver-carta-todos':
-        return { accion: 'ver-carta-todos' };
+      case 'ver-carta-rival': {
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) return { accion: 'esperar' };
+        const numCartasRival =
+          partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
+        if (numCartasRival === 0) return { accion: 'esperar' };
+        return {
+          accion: 'ver-carta-rival',
+          targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+          cartaIndexTarget: Math.floor(Math.random() * numCartasRival),
+        };
+      }
 
       case 'ver-carta-propia':
         return {

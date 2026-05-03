@@ -515,8 +515,18 @@ export class GameService {
     );
   } 
 
-  verCartaTodos(partida: Game, solicitanteId: string): CartaReveladaTodos[] {
-    return this.gameManager.verCartaTodos(partida, solicitanteId);
+  verCartaRival(
+    partida: Game,
+    solicitanteId: string,
+    rivalId: string,
+    indexCartaRival: number,
+  ): CartaReveladaTodos {
+    return this.gameManager.verCartaRival(
+      partida,
+      solicitanteId,
+      rivalId,
+      indexCartaRival,
+    );
   }
 
   intercambiarTodasCartas(partida: Game, remitenteId:string, destinatarioId:string){
