@@ -731,10 +731,17 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
   }
  
-  private notificarTodosDescartarPendiente(partida : Game, carta: Card){
-    this.server.to(partida.roomId).emit('game:descartar-pendiente',{
-      partidaId : partida.gameId,
-      carta: carta,
+  private notificarTodosDescartarPendiente(
+    partida: Game,
+    carta: Card,
+    tipo?: 'descartar' | 'intercambiar',
+    numCarta?: number,
+  ) {
+    this.server.to(partida.roomId).emit('game:descartar-pendiente', {
+      partidaId: partida.gameId,
+      carta,
+      ...(tipo ? { tipo } : {}),
+      ...(numCarta !== undefined ? { numCarta } : {}),
     });
   }
 
@@ -1407,7 +1414,11 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
         this.notificarTodosCartaRobada(partida);
       }
 
-      this.notificarTodosDescartarPendiente(partida,resultado.cartaDescartada);
+      this.notificarTodosDescartarPendiente(
+        partida,
+        resultado.cartaDescartada,
+        'descartar',
+      );
       this.scheduleBotProcessing(partida);
       return {
         success: true,
@@ -1437,7 +1448,12 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
 
       this.finalizarPartidaYSincronizarSala(partida);
 
-      this.notificarTodosDescartarPendiente(partida, carta);
+      this.notificarTodosDescartarPendiente(
+        partida,
+        carta,
+        'intercambiar',
+        payload.numCarta,
+      );
       this.scheduleBotProcessing(partida);
       return {
         success: true,
