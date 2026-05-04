@@ -632,6 +632,7 @@ export class GameService {
     recompensas: Array<{ userId: string; posicion: number; eloChange: number; cubitosChange: number }>,
   ): Promise<void> {
     for (const recompensa of recompensas) {
+      if(recompensa.eloChange===-1 || recompensa.cubitosChange===-1) return;
       await this.prisma.user.update({
         where: { username: recompensa.userId },
         data: {

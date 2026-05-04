@@ -2298,6 +2298,19 @@ export class GameManager {
 
     const recompensas = ranking.map((jugador) => {
       const posicion = jugador.posicion;
+      const idEnPartida = this.obtenerIndiceJugador(partida, jugador.userId);
+      const estadoJugador = partida.estadoGlobal.jugadores[idEnPartida];
+      
+      //Si es un bot, devolver -1
+      if (estadoJugador.controlador === 'bot') {
+        return {
+          userId: jugador.userId,
+          posicion,
+          eloChange: -1,
+          cubitosChange: -1,
+        };
+      }
+
       let eloChange = this.eloChangeByPosition(posicion, totalJugadores);
       // Cubitos basados en el cambio de ELO (proporcional)
       let cubitosChange = this.cubitosEarnedByPosition(eloChange);
