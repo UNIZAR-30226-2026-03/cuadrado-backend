@@ -2012,6 +2012,30 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
             gameId: payload.gameId,
             usuarioIniciador: contexto.userId,
           });
+        } else if (rival.controlador === 'bot') {
+          // El bot responde automáticamente: elegir carta aleatoria y finalizar intercambio
+          const botIndex = partida.estadoGlobal.turnoJugadores.indexOf(payload.rivalId);
+          
+          if (botIndex !== -1) {
+            const numCartasBot = partida.estadoGlobal.jugadores[botIndex].cartasMano.length;
+            
+            if (numCartasBot > 0) {
+              const cartaAleatoria = Math.floor(Math.random() * numCartasBot);
+              
+              // Ejecutar el intercambio como si el bot respondiera
+              const interceptoOK = this.gameService.intercambiarCartaInteractivo(
+                partida,
+                payload.rivalId,  // botId responde
+                contexto.userId,  // iniciadorId
+                cartaAleatoria
+              );
+              
+              if (interceptoOK) {
+                this.finalizarPartidaYSincronizarSala(partida);
+                this.notificarTodosCambioCartas(partida, contexto.userId, payload.rivalId);
+              }
+            }
+          }
         }
       } 
       this.scheduleBotProcessing(partida);
