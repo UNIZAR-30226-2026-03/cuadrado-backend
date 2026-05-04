@@ -74,6 +74,17 @@ export class VoiceGateway implements OnGatewayDisconnect {
       .emit('voice:ice-candidate', { from: client.id, candidate: payload.candidate });
   }
 
+  @SubscribeMessage('voice:mute')
+  handleMute(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { muted: boolean },
+  ): void {
+    const roomId = this.socketRoom.get(client.id);
+    if (!roomId) return;
+    const roomKey = `${VOICE_PREFIX}${roomId}`;
+    client.to(roomKey).emit('voice:mute-changed', { peerId: client.id, muted: payload.muted });
+  }
+
   @SubscribeMessage('voice:leave')
   handleLeave(@ConnectedSocket() client: Socket): void {
     this.leaveCurrentRoom(client);

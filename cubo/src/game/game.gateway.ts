@@ -1480,11 +1480,12 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       remitenteId = contexto.userId;
 
       const resultado = this.gameService.intercambiarCarta(partida, remitenteId,
-        payload.destinatarioId, payload.numCartaRemitente, 
+        payload.destinatarioId, payload.numCartaRemitente,
         payload.numCartaDestinatario);
 
         this.notificarTodosCambioCartas(partida,remitenteId, payload.destinatarioId
         ,payload.numCartaRemitente, payload.numCartaDestinatario);
+      this.finalizarPartidaYSincronizarSala(partida);
       this.scheduleBotProcessing(partida);
 
       return {
@@ -2202,7 +2203,7 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       // existente con un array de un único elemento para no romper el cliente.
       this.server.to(client.id).emit('game:cartas-reveladas-todos', {
         gameId: payload.gameId,
-        cartasReveladas: [cartaRevelada],
+        cartas: [cartaRevelada],
       });
 
       this.finalizarPartidaYSincronizarSala(partida);
