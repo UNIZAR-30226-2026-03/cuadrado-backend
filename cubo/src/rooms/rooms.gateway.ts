@@ -87,12 +87,6 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const result = this.roomsService.handleDisconnect(userId);
 
     if (result.roomCode && result.roomClosed) {
-      // El host se salió: cerrar sala Y partida
-      const game = this.gameService.getGameByRoomId(result.roomCode);
-      if (game) {
-        this.gameService.cerrarPartidaActiva(game.gameId);
-      }
-      
       this.server.to(result.roomCode).emit('room:closed', {
         reason: 'Host left the room',
         roomCode: result.roomCode,
@@ -102,14 +96,13 @@ export class RoomsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     if (result.roomCode && result.shouldEmitRoomUpdate) {
       if (result.waitingForReconnect) {
-        this.server.to(result.roomCode).emit('room:playerDisconnected', {
-          userId,
-          waitingForReconnect: true,
+        // Política: cualquier desconexión mid-game termina la partida para todos
+        this.roomsService.cerrarSalaForzado(result.roomCode);
+        this.server.to(result.roomCode).emit('room:closed', {
+          reason: 'Player left the game',
+          roomCode: result.roomCode,
         });
-        const roomState = this.roomsService.getRoomState(result.roomCode);
-        if (roomState) {
-          this.server.to(result.roomCode).emit('room:update', roomState);
-        }
+        this.server.in(result.roomCode).socketsLeave(result.roomCode);
       } else {
         this.server.to(result.roomCode).emit('room:playerDisconnected', {
           userId,

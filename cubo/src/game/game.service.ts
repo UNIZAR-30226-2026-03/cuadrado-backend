@@ -84,10 +84,6 @@ export class GameService {
     return this.gameManager.getBotDecisionContext(gameId, botId);
   }
 
-  cerrarPartidaActiva(gameId: string): void {
-    this.gameManager.cerrarPartidaActiva(gameId);
-  }
-
   resolverTimeoutsTurnoActivos(): Game[] {
     const partidasAfectadas: Game[] = [];
     const partidasActivas = this.gameManager.getActiveGames();

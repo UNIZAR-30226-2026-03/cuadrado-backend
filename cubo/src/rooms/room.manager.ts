@@ -291,7 +291,6 @@ export class RoomManager {
     shouldEmitRoomUpdate: boolean;
     roomClosed: boolean;
     waitingForReconnect: boolean;
-    isHostLeaving: boolean;
   } {
     const roomCode = this.userToRoom.get(userId);
 
@@ -301,7 +300,6 @@ export class RoomManager {
         shouldEmitRoomUpdate: false,
         roomClosed: false,
         waitingForReconnect: false,
-        isHostLeaving: false,
       };
     }
 
@@ -312,7 +310,6 @@ export class RoomManager {
         shouldEmitRoomUpdate: false,
         roomClosed: false,
         waitingForReconnect: false,
-        isHostLeaving: false,
       };
     }
 
@@ -323,19 +320,16 @@ export class RoomManager {
         shouldEmitRoomUpdate: false,
         roomClosed: false,
         waitingForReconnect: false,
-        isHostLeaving: false,
       };
     }
 
     if (room.started) {
-      const isHostLeaving = room.hostId === userId;
       this.marcarJugadorDesconectado(userId);
       return {
         roomCode,
         shouldEmitRoomUpdate: true,
-        roomClosed: isHostLeaving,
+        roomClosed: false,
         waitingForReconnect: true,
-        isHostLeaving,
       };
     }
 
@@ -345,7 +339,6 @@ export class RoomManager {
       shouldEmitRoomUpdate: Boolean(leaveResult.room && !leaveResult.isHostLeaving),
       roomClosed: Boolean(leaveResult.room && leaveResult.isHostLeaving),
       waitingForReconnect: false,
-      isHostLeaving: Boolean(leaveResult.isHostLeaving),
     };
   }
 
