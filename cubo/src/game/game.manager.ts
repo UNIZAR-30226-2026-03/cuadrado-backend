@@ -104,6 +104,7 @@ export interface ResultadoPonerCartaSobreOtra {
   accionCorrecta: boolean;
   numCartas: number;
   reshuffle: ReshuffleInfo;
+  cartaRobada?: Card;
 }
 
 export interface PersistedPlayerState {
@@ -1888,6 +1889,8 @@ export class GameManager {
       throw new Error('No hay carta descartada sobre la que reaccionar');
     }
 
+    let cartaRobada : Card | undefined;
+
     //gestionar la excepción de que los reyes tienen distinta
     //puntuación en función del palo pero siguen siendo el mismo numero
     //No entiendo esto mucho la verdad... que tienen que ver los puntos??
@@ -1899,11 +1902,12 @@ export class GameManager {
       this.validarFinPartidaPorSinCartas(partida, userId);
       // si acierta, mantiene el bloqueo de reacción para encadenar intentos.
       accionCorrecta = true;
+
     } else {
       //el jugador ha fallado a la hora de elegir la carta
       reshuffle = this.intentarRebarajarDescartes(partida);
 
-      const cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
+      cartaRobada = partida.estadoGlobal.cartasVigentes.pop();
       if (!cartaRobada) {
         throw new Error(SIN_CARTAS_ERROR_MESSAGE);
       }
@@ -1926,6 +1930,7 @@ export class GameManager {
       accionCorrecta,
       numCartas,
       reshuffle,
+      cartaRobada
     };
   }
 

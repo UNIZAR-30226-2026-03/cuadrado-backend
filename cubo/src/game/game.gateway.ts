@@ -1956,6 +1956,14 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
           gameId: payload.gameId,
         });
       } 
+      if(!resultado.accionCorrecta && resultado.cartaRobada){
+        this.server.to(client.id).emit('game:carta-robada-por-descarte-rapido',{
+          gameId: payload.gameId,
+          cartaRobada: resultado.cartaRobada,
+          numCartasMano: resultado.numCartas,
+          reshuffle: resultado.reshuffle,
+        });
+      }
       //notificar al resto de jugadores que el jugador en cuestión tiene una
       //carta más o una menos
       this.notificarTodosAccionCartaSobreOtra(partida, resultado.numCartas,
