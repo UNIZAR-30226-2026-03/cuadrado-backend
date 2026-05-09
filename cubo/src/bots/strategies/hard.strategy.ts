@@ -244,6 +244,30 @@ export class HardBotStrategy extends BotManager {
         return { accion: 'ver-carta', cartaIndex: indice };
       }
 
+      case 'ver-carta-propia-y-rival': {
+        // Manejo de la carta J (11): ver una carta propia y una del rival
+        const idEnPartida = this.obtenerIndiceJugador(partida, botId);
+        const rivalNum = this.obtenerIndiceRivalAleatorio(partida, idEnPartida);
+        if (rivalNum === null) {
+          return { accion: 'esperar' };
+        }
+
+        const numCartasJugador =
+          partida.estadoGlobal.jugadores[idEnPartida].cartasMano.length;
+        const cartaIndex = Math.floor(Math.random() * numCartasJugador);
+        const rivalId = partida.estadoGlobal.turnoJugadores[rivalNum];
+        const numCartasRival =
+          partida.estadoGlobal.jugadores[rivalNum].cartasMano.length;
+        const cartaIndexRival = Math.floor(Math.random() * numCartasRival);
+
+        return {
+          accion: 'ver-carta-propia-y-rival',
+          cartaIndex,
+          targetUserId: rivalId,
+          cartaIndexTarget: cartaIndexRival,
+        };
+      }
+
       case 'intercambiar-carta': {
         // Manejo del intercambio interactivo bidireccional (Carta 9)
         // Primer paso: botId es quien inicia y elige qué carta ofrecer
@@ -278,6 +302,10 @@ export class HardBotStrategy extends BotManager {
               accion: 'intercambiar-carta',
               cartaIndex,
               targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+              cartaIndexTarget: Math.floor(
+                Math.random() *
+                  partida.estadoGlobal.jugadores[rivalNum].cartasMano.length,
+              ),
             };
           }
 
@@ -301,6 +329,10 @@ export class HardBotStrategy extends BotManager {
             accion: 'intercambiar-carta',
             cartaIndex,
             targetUserId: partida.estadoGlobal.turnoJugadores[rivalNum],
+            cartaIndexTarget: Math.floor(
+              Math.random() *
+                partida.estadoGlobal.jugadores[rivalNum].cartasMano.length,
+            ),
           };
         }
 
