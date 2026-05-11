@@ -17,6 +17,18 @@ const GAME_ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const TURN_TIMEOUT_MS = 30_000;
 const EXTRA_TIME_FIRST_TURN = 8000;
 
+function resolveTurnTimeoutMs(turnTimeSeconds?: number): number {
+  if (
+    typeof turnTimeSeconds !== 'number' ||
+    !Number.isFinite(turnTimeSeconds) ||
+    turnTimeSeconds <= 0
+  ) {
+    return TURN_TIMEOUT_MS;
+  }
+
+  return Math.round(turnTimeSeconds * 1000);
+}
+
 interface PermisoHabilidadBase {
   jugadorId: string;
   turno: number;
@@ -134,6 +146,7 @@ export interface EstadoInicialJugador {
 export interface ConfiguracionInicioPartida {
   deckCount: number;
   enabledPowers: number[];
+  turnTimeSeconds?: number;
 }
 
 export const SIN_CARTAS_ERROR_MESSAGE =
@@ -298,7 +311,8 @@ export class GameManager {
   }
 
   private actualizarDeadlineTurno(partida: Game) {
-    partida.estadoGlobal.turnDeadlineAt = Date.now() + TURN_TIMEOUT_MS;
+    partida.estadoGlobal.turnDeadlineAt =
+      Date.now() + partida.estadoGlobal.turnTimeoutMs;
   }
 
   private cambiarFase(partida: Game, phase: TurnPhase) {
@@ -830,6 +844,7 @@ export class GameManager {
   cargarEstadoPersistido(
     codigoSala: string,
     persisted: PersistedGameState,
+    turnTimeSeconds?: number,
   ): Game {
     if (this.roomToGame.has(codigoSala)) {
       throw new Error('Ya existe una partida activa para la sala');
@@ -889,10 +904,12 @@ export class GameManager {
     const turn = persisted.turn;
     const gameCode = this.generateUniqueRoomCode();
 
+    const turnTimeoutMs = resolveTurnTimeoutMs(turnTimeSeconds);
     const estadoGlobal: GameState = {
       turn,
       phase: 'WAIT_DRAW',
-      turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + EXTRA_TIME_FIRST_TURN,
+      turnDeadlineAt: Date.now() + turnTimeoutMs + EXTRA_TIME_FIRST_TURN,
+      turnTimeoutMs,
       numBarajas: deckCount,
       cuboActivado: false,
       cuboTurnosRestantes: undefined,
@@ -1187,10 +1204,12 @@ export class GameManager {
       }));
 
     GameManager.asignarCartasJugadores(baraja, estadoJugadores, numJugadores);
+    const turnTimeoutMs = resolveTurnTimeoutMs(configuracion?.turnTimeSeconds);
     const estadoGlobal: GameState = {
       turn: 0,
       phase: 'WAIT_DRAW',
-      turnDeadlineAt: Date.now() + TURN_TIMEOUT_MS + EXTRA_TIME_FIRST_TURN, // se le da un tiempo extra en el primer turno
+      turnDeadlineAt: Date.now() + turnTimeoutMs + EXTRA_TIME_FIRST_TURN, // se le da un tiempo extra en el primer turno
+      turnTimeoutMs,
       numBarajas,
       cuboActivado: false,
       cuboTurnosRestantes: undefined,

@@ -375,7 +375,11 @@ export class GameService {
 
     room.started = true;
 
-    return this.gameManager.cargarEstadoPersistido(room.code, persisted);
+    return this.gameManager.cargarEstadoPersistido(
+      room.code,
+      persisted,
+      room.rules.turnTimeSeconds,
+    );
   }
 
   validateStartContext(userId: string, socketId: string): ValidatedStartContext {
@@ -461,10 +465,11 @@ export class GameService {
 
     room.started = true;
 
-    return this.gameManager.inicioPartida(room.code, jugadoresIniciales, {
-      deckCount: room.rules.deckCount,
-      enabledPowers: room.rules.enabledPowers,
-    });
+      return this.gameManager.inicioPartida(room.code, jugadoresIniciales, {
+        deckCount: room.rules.deckCount,
+        enabledPowers: room.rules.enabledPowers,
+        turnTimeSeconds: room.rules.turnTimeSeconds,
+      });
   }
 
   robarCarta(partida: Game, userId: string): ResultadoRobarCarta {

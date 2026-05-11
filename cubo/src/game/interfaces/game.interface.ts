@@ -22,6 +22,7 @@ export interface GameState {
     turn : number;
     phase: TurnPhase;
     turnDeadlineAt: number;
+    turnTimeoutMs: number;
     numBarajas: number;
     cuboActivado: boolean;
     cuboSolicitanteId: string | null;

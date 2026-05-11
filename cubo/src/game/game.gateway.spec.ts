@@ -34,6 +34,7 @@ const createGame = (overrides: Partial<Game> = {}): Game => ({
     turn: 0,
     phase: 'WAIT_DRAW',
     turnDeadlineAt: Date.now() + 30_000,
+    turnTimeoutMs: 30_000,
     cuboActivado: false,
     cuboSolicitanteId: null,
     cuboTurnosRestantes: undefined,
