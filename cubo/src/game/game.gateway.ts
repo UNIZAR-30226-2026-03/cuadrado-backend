@@ -1145,7 +1145,20 @@ export class GameGateway implements OnGatewayInit, OnGatewayDisconnect, OnModule
       throw new Error('El líder no está conectado para crear la revancha');
     }
 
-    this.gameService.desvincularUsuarioDeSalaActiva(session.hostId);
+    const previousRoom = this.gameService.desvincularUsuarioDeSalaActiva(
+      session.hostId,
+    );
+
+    // Si al desvincular el host se eliminó la sala original, limpiar los sockets
+    // que aún permanecieran en esa room de socket.io para evitar salas fantasma
+    // No creo que sea esto pero por si acaso
+    if (!previousRoom) {
+      try {
+        this.server.in(session.originalRoomCode).socketsLeave(session.originalRoomCode);
+      } catch {
+        // Ignorar errores de limpieza de sockets
+      }
+    }
 
     const room = this.gameService.createRoom(session.hostId, hostSocketId, {
       name: session.roomName,

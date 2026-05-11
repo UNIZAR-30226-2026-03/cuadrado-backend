@@ -580,22 +580,20 @@ export class RoomManager {
 
     this.userToRoom.delete(userId);
 
+    // Si el anfitrión se desvincula, eliminar la sala por completo (no puede existir sala sin anfitrión)
     if (room.hostId === userId) {
-      const hostAnterior = room.players.get(userId);
-      if (hostAnterior) {
-        hostAnterior.isHost = false;
-      }
+      room.players.forEach((p) => {
+        if (this.userToRoom.get(p.userId) === room.code) {
+          this.userToRoom.delete(p.userId);
+        }
+      });
+      this.rooms.delete(room.code);
+      return null;
+    }
 
-      const nuevoHost = Array.from(room.players.values()).find(
-        (player) =>
-          player.userId !== userId &&
-          player.controlador === 'humano' &&
-          this.userToRoom.get(player.userId) === room.code,
-      );
-      if (nuevoHost) {
-        room.hostId = nuevoHost.userId;
-        nuevoHost.isHost = true;
-      }
+    // Si no es el anfitrión, quitarlo de la colección de players
+    if (room.players.has(userId)) {
+      room.players.delete(userId);
     }
 
     return room;
